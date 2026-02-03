@@ -42,7 +42,6 @@ export const updateDraftSchema = z.object({
 export const publishSchema = z.object({});
 
 export const revealContactSchema = z.object({
-  requesterUserId: z.string().min(1),
   tokenCost: z.number().int().positive()
 });
 

@@ -6,12 +6,12 @@ export const getSupabaseClient = (): SupabaseClient => {
   if (client) {
     return client;
   }
-  const url = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) {
     throw new Error('Missing Supabase environment variables');
   }
-  client = createClient(url, serviceKey, {
+  client = createClient(url, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false }
   });
   return client;

@@ -7,22 +7,11 @@ export const errorHandler = (
   res: Response,
   _next: NextFunction
 ) => {
-  const fallback = {
-    code: 'INTERNAL_ERROR',
-    message: 'Unexpected error'
-  };
-
   if (err instanceof AppError) {
-    res.status(err.status).json({
-      error: {
-        code: err.code,
-        message: err.message,
-        details: err.details
-      }
-    });
+    res.status(err.status).json({ ok: false, error: err.message });
     return;
   }
 
   console.error(err);
-  res.status(500).json({ error: fallback });
+  res.status(500).json({ ok: false, error: 'unexpected_error' });
 };

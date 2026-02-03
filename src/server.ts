@@ -2,6 +2,8 @@ import express from 'express';
 import catalogRoutes from './routes/catalogRoutes';
 import listingRoutes from './routes/listingRoutes';
 import searchRoutes from './search/routes/searchRoutes';
+import authRoutes from './routes/authRoutes';
+import meRoutes from './routes/meRoutes';
 import { errorHandler } from './middleware/errorHandler';
 import { requestIdMiddleware } from './middleware/requestId';
 import { authPlaceholder } from './middleware/auth';
@@ -21,6 +23,8 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.use('/api/auth', authRoutes);
+app.use('/api', meRoutes);
 app.use('/catalog', catalogRoutes);
 app.use('/', listingRoutes);
 app.use('/search', searchRoutes);
