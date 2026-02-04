@@ -5,6 +5,8 @@ import { parse, serialize } from 'cookie';
 const getSupabaseConfig = () => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  console.log('SUPABASE_URL:', url);
+  console.log('SUPABASE_ANON_KEY_PREFIX:', anonKey?.slice(0, 10));
 
   if (!url || !anonKey) {
     throw new Error('Missing Supabase environment variables');
@@ -42,8 +44,8 @@ export const createServerSupabase = (req: Request, res: Response) => {
   return createServerClient(url, anonKey, {
     cookies: {
       getAll: () => getRequestCookies(req),
-      setAll: (cookiesToSet) => setResponseCookies(res, cookiesToSet)
-    }
+      setAll: (cookiesToSet: { name: string; value: string; options?: any }[]) =>
+        setResponseCookies(res, cookiesToSet)    }
   });
 };
 
