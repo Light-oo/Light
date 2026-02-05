@@ -1,44 +1,13 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+﻿import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import type { Request, Response } from 'express';
 import { parse, serialize } from 'cookie';
 
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-const getSupabaseConfig = () => {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  console.log('SUPABASE_URL:', url);
-  console.log('SUPABASE_ANON_KEY_PREFIX:', anonKey?.slice(0, 10));
-
-  if (!url || !anonKey) {
-    throw new Error('Missing Supabase environment variables');
-=======
-const getBearerToken = (req: Request) => {
-  const header = req.headers.authorization;
-  if (!header) {
-    return null;
->>>>>>> theirs
-  }
-  const [scheme, token] = header.split(' ');
-  if (scheme?.toLowerCase() !== 'bearer' || !token) {
-    return null;
-=======
 const getSupabaseConfig = () => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !anonKey) {
     throw new Error('Missing Supabase environment variables');
->>>>>>> theirs
-=======
-const getSupabaseConfig = () => {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anonKey) {
-    throw new Error('Missing Supabase environment variables');
->>>>>>> theirs
   }
 
   return { url, anonKey };
@@ -46,10 +15,7 @@ const getSupabaseConfig = () => {
 
 const getRequestCookies = (req: Request) => {
   const header = req.headers.cookie;
-  if (!header) {
-    return [];
-  }
-
+  if (!header) return [];
   const parsed = parse(header);
   return Object.entries(parsed).map(([name, value]) => ({ name, value }));
 };
@@ -73,8 +39,9 @@ export const createServerSupabase = (req: Request, res: Response) => {
   return createServerClient(url, anonKey, {
     cookies: {
       getAll: () => getRequestCookies(req),
-      setAll: (cookiesToSet: { name: string; value: string; options?: any }[]) =>
-        setResponseCookies(res, cookiesToSet)    }
+      setAll: (cookiesToSet: Array<{ name: string; value: string; options?: CookieOptions }>) =>
+        setResponseCookies(res, cookiesToSet)
+    }
   });
 };
 

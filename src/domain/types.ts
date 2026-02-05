@@ -88,3 +88,16 @@ export interface ListingBundle {
   itemType: ItemType | null;
   itemTypeRule: ItemTypeRule | null;
 }
+
+export interface Profile {
+  id: string;
+  user_id: string;
+  name: string | null;
+  whatsapp_e164: string | null;
+  contact_url: string | null;
+  is_blocked: boolean;
+  role: 'buyer' | 'seller' | 'admin';
+  created_at: string;
+}
+
+
