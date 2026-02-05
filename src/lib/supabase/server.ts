@@ -2,6 +2,9 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import type { Request, Response } from 'express';
 import { parse, serialize } from 'cookie';
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 const getSupabaseConfig = () => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -10,6 +13,32 @@ const getSupabaseConfig = () => {
 
   if (!url || !anonKey) {
     throw new Error('Missing Supabase environment variables');
+=======
+const getBearerToken = (req: Request) => {
+  const header = req.headers.authorization;
+  if (!header) {
+    return null;
+>>>>>>> theirs
+  }
+  const [scheme, token] = header.split(' ');
+  if (scheme?.toLowerCase() !== 'bearer' || !token) {
+    return null;
+=======
+const getSupabaseConfig = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey) {
+    throw new Error('Missing Supabase environment variables');
+>>>>>>> theirs
+=======
+const getSupabaseConfig = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey) {
+    throw new Error('Missing Supabase environment variables');
+>>>>>>> theirs
   }
 
   return { url, anonKey };
