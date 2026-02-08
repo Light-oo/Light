@@ -65,7 +65,8 @@ export const listingService = {
         listing_id: listingId,
         price_type: payload.howMuch.priceType ?? null,
         price_amount: payload.howMuch.priceAmount ?? null,
-        currency: payload.howMuch.currency ?? null
+        currency: payload.howMuch.currency ?? null,
+        hide_price: payload.howMuch.hidePrice ?? null
       });
     }
 

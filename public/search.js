@@ -26,6 +26,10 @@ let listedById = new Map();
 const DEFAULT_LOCATION_KEY = 'pilotDefaultLocation';
 const LAST_SEARCH_LOCATION_KEY = 'pilotLastSearchLocation';
 const REVEALED_CONTACTS_KEY = 'pilotRevealedContacts';
+const MODE_KEY = 'pilotSearchMode';
+const MODE_BUY = 'BUY';
+const MODE_SELL = 'SELL';
+const WHATSAPP_KEY = 'pilotWhatsapp';
 
 const optionLabels = {
   markets: new Map(),
@@ -97,6 +101,8 @@ const readRevealedContacts = () => {
     return {};
   }
 };
+
+const readLocalWhatsapp = () => localStorage.getItem(WHATSAPP_KEY) || '';
 
 const getStoredContact = (listingId) => {
   const contacts = readRevealedContacts();
@@ -341,6 +347,156 @@ const buildCard = (listing) => {
   card.appendChild(actions);
 
   return card;
+};
+
+const getMode = () => {
+  const stored = localStorage.getItem(MODE_KEY);
+  if (stored === MODE_SELL) return MODE_SELL;
+  return MODE_BUY;
+};
+
+const setMode = (mode) => {
+  const normalized = mode === MODE_SELL ? MODE_SELL : MODE_BUY;
+  localStorage.setItem(MODE_KEY, normalized);
+  const modeToggle = document.getElementById('modeToggle');
+  const sellFields = document.getElementById('sellFields');
+  const applyBtn = document.getElementById('applyRefine');
+  if (modeToggle) modeToggle.textContent = normalized;
+  if (sellFields) sellFields.hidden = normalized !== MODE_SELL;
+  if (applyBtn) applyBtn.textContent = normalized === MODE_SELL ? 'Publicar' : 'Aplicar';
+  document.body.dataset.mode = normalized;
+};
+
+const getAccountName = async () => {
+  try {
+    const response = await fetch('/api/me', { credentials: 'include' });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const email = payload?.user?.email;
+    if (email && typeof email === 'string') {
+      return email.split('@')[0] || null;
+    }
+  } catch (_error) {
+    return null;
+  }
+  return null;
+};
+
+const publishListing = async () => {
+  const priceInput = document.getElementById('sellPrice');
+  const hidePriceInput = document.getElementById('sellHidePrice');
+  const priceValue = Number(priceInput?.value);
+  if (!Number.isFinite(priceValue) || priceValue < 10 || priceValue > 1000) {
+    showToast('Ingresa un precio entre 10 y 1000.');
+    return;
+  }
+
+  const whatsapp = readLocalWhatsapp();
+  if (!whatsapp) {
+    showToast('Configura tu WhatsApp primero.');
+    window.location.href = '/app/account.html';
+    return;
+  }
+
+  const location = readStoredLocation(DEFAULT_LOCATION_KEY) || readStoredLocation(LAST_SEARCH_LOCATION_KEY);
+  if (!location) {
+    showToast('Configura tu ubicación por defecto.');
+    window.location.href = '/app/account.html';
+    return;
+  }
+
+  const contactName = (await getAccountName()) || whatsapp;
+
+  const marketId = sanitizeValue(document.getElementById('marketId').value);
+  const brandId = sanitizeValue(document.getElementById('brand').value);
+  const modelId = sanitizeValue(document.getElementById('model').value);
+  const yearId = sanitizeValue(document.getElementById('year').value);
+  const itemTypeId = sanitizeValue(document.getElementById('itemTypeId').value);
+  const sideId = sanitizeValue(document.getElementById('side').value);
+  const positionId = sanitizeValue(document.getElementById('position').value);
+
+  const brand = brandId ? optionLabels.brands.get(brandId) || brandId : null;
+  const model = modelId ? optionLabels.models.get(modelId) || modelId : null;
+  const yearLabel = yearId ? optionLabels.years.get(yearId) || yearId : null;
+  const yearValue = yearLabel ? Number(yearLabel) : null;
+  const side = sideId ? optionLabels.sides.get(sideId) || sideId : null;
+  const position = positionId ? optionLabels.positions.get(positionId) || positionId : null;
+
+  try {
+    const draftResponse = await fetch('/listings/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ marketId, source: 'pilot' })
+    });
+
+    if (draftResponse.status === 401) {
+      window.location.href = '/auth';
+      return;
+    }
+
+    if (!draftResponse.ok) {
+      showToast('No pudimos iniciar la publicación.');
+      return;
+    }
+
+    const draftPayload = await draftResponse.json();
+    const listingId = draftPayload?.data?.id || draftPayload?.id;
+    if (!listingId) {
+      showToast('No pudimos crear el borrador.');
+      return;
+    }
+
+    const updateResponse = await fetch(`/listings/${listingId}/draft`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        what: {
+          itemTypeId: itemTypeId || null,
+          brand,
+          model,
+          yearFrom: Number.isFinite(yearValue) ? yearValue : null,
+          yearTo: Number.isFinite(yearValue) ? yearValue : null,
+          side,
+          position
+        },
+        howMuch: {
+          priceType: 'fixed',
+          priceAmount: priceValue,
+          currency: 'USD',
+          hidePrice: Boolean(hidePriceInput?.checked)
+        },
+        location: {
+          department: location.department || '',
+          municipality: location.municipality || ''
+        },
+        contact: {
+          sellerType: 'seller',
+          contactName,
+          whatsapp
+        }
+      })
+    });
+
+    if (!updateResponse.ok) {
+      showToast('No pudimos completar los datos.');
+      return;
+    }
+
+    const publishResponse = await fetch(`/listings/${listingId}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (!publishResponse.ok) {
+      showToast('No pudimos publicar el repuesto.');
+      return;
+    }
+
+    showToast('Publicado.');
+    closeOverlay(refineOverlay);
+  } catch (_error) {
+    showToast('Error al publicar.');
+  }
 };
 
 const updateMarketLabel = (params) => {
@@ -629,6 +785,11 @@ const loadStaticOptions = async () => {
 };
 
 const applyRefine = () => {
+  const mode = getMode();
+  if (mode === MODE_SELL) {
+    publishListing();
+    return;
+  }
   const params = new URLSearchParams();
   const marketId = sanitizeValue(document.getElementById('marketId').value);
   const brand = sanitizeValue(document.getElementById('brand').value);
@@ -659,6 +820,10 @@ const resetRefine = async () => {
   refineFields.forEach((field) => {
     document.getElementById(field).value = '';
   });
+  const sellPrice = document.getElementById('sellPrice');
+  const sellHidePrice = document.getElementById('sellHidePrice');
+  if (sellPrice) sellPrice.value = '';
+  if (sellHidePrice) sellHidePrice.checked = false;
   window.history.replaceState({}, '', window.location.pathname);
   closeOverlay(refineOverlay);
   const params = new URLSearchParams();
@@ -699,6 +864,10 @@ document.getElementById('openRefine').addEventListener('click', () => {
 document.getElementById('closeRefine').addEventListener('click', () => closeOverlay(refineOverlay));
 document.getElementById('applyRefine').addEventListener('click', applyRefine);
 document.getElementById('resetRefine').addEventListener('click', resetRefine);
+document.getElementById('modeToggle').addEventListener('click', () => {
+  const next = getMode() === MODE_BUY ? MODE_SELL : MODE_BUY;
+  setMode(next);
+});
 document.getElementById('brand').addEventListener('change', async (event) => {
   const brandId = event.target.value || '';
   await loadModels(brandId || null);
@@ -712,6 +881,7 @@ document.getElementById('marketId').addEventListener('change', async (event) => 
 });
 
 window.addEventListener('DOMContentLoaded', async () => {
+  setMode(getMode());
   const params = currentParams();
   try {
     await loadStaticOptions();
