@@ -124,24 +124,35 @@ const requireField = <T>(value: T | null | undefined, field: string): T => {
   return value;
 };
 
+const requireDefined = <T>(value: T | undefined, field: string): T => {
+  if (value === undefined) {
+    throw new Error(`missing_field:${field}`);
+  }
+  return value;
+};
+
 const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard => {
   const price =
     cardType === 'sell'
       ? requireField<number>(row.price_amount, 'price_amount')
       : requireField<number>(row.expected_price_amount, 'expected_price_amount');
-  const priceType = requireField<string>(row.price_type, 'price_type');
+  const priceTypeRaw =
+    cardType === 'buy' ? row.expected_price_type ?? row.price_type : row.price_type;
+  const priceType = requireField<string>(
+    priceTypeRaw,
+    cardType === 'buy' ? 'expected_price_type' : 'price_type'
+  );
   if (priceType !== 'fixed' && priceType !== 'negotiable') {
     throw new Error(`invalid_price_type:${priceType}`);
   }
 
-  const year =
-    row.year ??
-    row.year_from ??
-    row.year_to ??
-    null;
-  if (year === null || year === undefined) {
+  const year = row.year ?? row.year_from ?? row.year_to;
+  if (year === undefined || year === null) {
     throw new Error('missing_field:year');
   }
+
+  const itemTypeRaw = row.item_type ?? row.item_type_label_es ?? row.item_type_key;
+  const partTextRaw = row.part_text ?? row.detail ?? row.notes ?? row.part;
 
   return {
     cardType,
@@ -149,17 +160,17 @@ const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard => 
       brand: requireField<string>(row.brand, 'brand'),
       model: requireField<string>(row.model, 'model'),
       year: Number(year),
-      itemType: requireField<string>(row.item_type, 'item_type'),
-      partText: requireField<string>(row.part_text, 'part_text')
+      itemType: requireField<string>(itemTypeRaw, 'item_type'),
+      partText: requireField<string>(partTextRaw, 'part_text')
     },
     price,
     price_type: priceType === 'negotiable' ? 'negotiable' : 'fixed',
     location: {
-      department: requireField<string>(row.department, 'department'),
-      municipality: requireField<string>(row.municipality, 'municipality')
+      department: requireDefined<string | null>(row.department ?? null, 'department'),
+      municipality: requireDefined<string | null>(row.municipality ?? null, 'municipality')
     },
     audit: {
-      created_at: requireField<string>(row.created_at, 'created_at')
+      created_at: requireField<string>(row.created_at ?? row.published_at ?? row.updated_at, 'created_at')
     }
   };
 };
@@ -187,7 +198,13 @@ export const searchService = {
     if (resolved.itemTypeId) builder = builder.eq('item_type_id', resolved.itemTypeId);
     if (resolved.brand) builder = builder.eq('brand', resolved.brand);
     if (resolved.model) builder = builder.eq('model', resolved.model);
-    if (resolved.year) builder = builder.eq('year', resolved.year);
+    if (resolved.year) {
+      if (mode === 'BUY') {
+        builder = builder.lte('year_from', resolved.year).gte('year_to', resolved.year);
+      } else {
+        builder = builder.eq('year', resolved.year);
+      }
+    }
     if (resolved.q) builder = builder.ilike('part_text', `%${resolved.q}%`);
 
     const start = (query.page - 1) * query.pageSize;
