@@ -134,12 +134,21 @@ const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard => 
     throw new Error(`invalid_price_type:${priceType}`);
   }
 
+  const year =
+    row.year ??
+    row.year_from ??
+    row.year_to ??
+    null;
+  if (year === null || year === undefined) {
+    throw new Error('missing_field:year');
+  }
+
   return {
     cardType,
     what: {
       brand: requireField<string>(row.brand, 'brand'),
       model: requireField<string>(row.model, 'model'),
-      year: requireField<number>(row.year, 'year'),
+      year: Number(year),
       itemType: requireField<string>(row.item_type, 'item_type'),
       partText: requireField<string>(row.part_text, 'part_text')
     },
@@ -171,7 +180,10 @@ export const searchService = {
     }
 
     let builder: any = supabase.from(viewName).select('*', { count: 'exact' });
-    builder = builder.eq('listing_type', listingType).eq('status', statusValue);
+    if (mode === 'BUY') {
+      builder = builder.eq('listing_type', listingType);
+    }
+    builder = builder.eq('status', statusValue);
     if (resolved.itemTypeId) builder = builder.eq('item_type_id', resolved.itemTypeId);
     if (resolved.brand) builder = builder.eq('brand', resolved.brand);
     if (resolved.model) builder = builder.eq('model', resolved.model);
