@@ -63,7 +63,13 @@
             <option value="">Cualquiera</option>
           </select>
         </div>
-        <div class="field">
+        <div class="field buy-only">
+          <label class="label required-always" for="partId">Pieza</label>
+          <select id="partId">
+            <option value="">Selecciona una pieza</option>
+          </select>
+        </div>
+        <div class="field sell-only">
           <label class="label required-always" for="itemDetail">Pieza</label>
           <input id="itemDetail" type="text" placeholder="Ej: Bumper delantero" required />
         </div>
@@ -72,7 +78,7 @@
           <input
             id="extraDetails"
             type="text"
-            placeholder="AWD, 2WD, ECU, Modulo completo, etc"
+            placeholder="AWD, 2WD, ECU, Módulo completo, etc"
           />
         </div>
         <div class="field-row sell-only">

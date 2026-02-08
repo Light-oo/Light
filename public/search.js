@@ -11,7 +11,7 @@ const openRefineBtn = document.getElementById('openRefine');
 const sellPublishBtn = document.getElementById('sellPublish');
 const sellSearchBtn = document.getElementById('sellSearch');
 
-const refineFields = ['itemTypeId', 'brand', 'model', 'year', 'side', 'position', 'itemDetail', 'priceInput', 'extraDetails'];
+const refineFields = ['itemTypeId', 'brand', 'model', 'year', 'side', 'position', 'itemDetail', 'priceInput', 'extraDetails', 'partId'];
 
 let nextCursor = null;
 let renderedResults = [];
@@ -33,7 +33,8 @@ const optionLabels = {
   models: new Map(),
   sides: new Map(),
   positions: new Map(),
-  years: new Map()
+  years: new Map(),
+  parts: new Map()
 };
 
 const fetchCatalog = async (path) => {
@@ -512,12 +513,14 @@ const updateQuerySummary = (params) => {
   const modelId = params.get('model');
   const yearId = params.get('year');
   const itemTypeId = params.get('itemTypeId');
+  const partId = params.get('partId');
   const sideId = params.get('side');
   const positionId = params.get('position');
   if (brandId) tokens.push(optionLabels.brands.get(brandId) || brandId);
   if (modelId) tokens.push(optionLabels.models.get(modelId) || modelId);
   if (yearId) tokens.push(optionLabels.years.get(yearId) || yearId);
   if (itemTypeId) tokens.push(optionLabels.itemTypes.get(itemTypeId) || itemTypeId);
+  if (partId) tokens.push(optionLabels.parts.get(partId) || partId);
   if (sideId) tokens.push(optionLabels.sides.get(sideId) || sideId);
   if (positionId) tokens.push(optionLabels.positions.get(positionId) || positionId);
   querySummaryEl.textContent = tokens.join(' · ');
@@ -627,7 +630,7 @@ const onRenderError = (_error, onRetry) => {
 
   const helper = document.createElement('div');
   helper.className = 'helper';
-  helper.textContent = 'Revisa tu conexión e intenta de nuevo.';
+  helper.textContent = _error?.message || 'Revisa tu conexión e intenta de nuevo.';
 
   const retryBtn = document.createElement('button');
   retryBtn.className = 'btn btn-primary btn-block';
@@ -657,9 +660,17 @@ const requestListings = async (params, cursor) => {
   if (!query.get('pageSize')) query.set('pageSize', '10');
   if (!query.get('sort')) query.set('sort', 'newest');
 
+  const mode = (query.get('mode') || '').toUpperCase();
+  if (mode === MODE_BUY) {
+    query.delete('side');
+    query.delete('position');
+    query.delete('expectedPrice');
+  }
+
   const response = await fetch(`/search/listings?${query.toString()}`);
   if (!response.ok) {
-    throw new Error(`search_failed_${response.status}`);
+    const errorText = await response.text();
+    throw new Error(`search_failed_${response.status}:${errorText}`);
   }
 
   let payload;
@@ -757,17 +768,20 @@ const getFormState = () => {
     position: sanitizeValue(document.getElementById('position').value),
     detail: sanitizeValue(document.getElementById('itemDetail').value),
     extraDetails: sanitizeValue(document.getElementById('extraDetails')?.value || ''),
+    partId: sanitizeValue(document.getElementById('partId')?.value || ''),
     expectedPrice: priceValue
   };
-  const requiredIds = ['brand', 'model', 'year', 'itemTypeId', 'detail'];
-  const allFilled = requiredIds.every((key) => values[key]?.length > 0);
   if (getMode() === MODE_SELL) {
+    const requiredIds = ['brand', 'model', 'year', 'itemTypeId', 'detail'];
+    const allFilled = requiredIds.every((key) => values[key]?.length > 0);
     const priceValid = Number.isFinite(priceValue) && priceValue >= 10 && priceValue <= 1000;
     return {
       values,
       isValid: allFilled && priceValid
     };
   }
+  const requiredIds = ['brand', 'model', 'year', 'itemTypeId', 'partId'];
+  const allFilled = requiredIds.every((key) => values[key]?.length > 0);
   return {
     values,
     isValid: allFilled
@@ -800,6 +814,25 @@ const loadStaticOptions = async () => {
   applyOptions(yearSelect, years, optionLabels.years);
 };
 
+const loadParts = async (itemTypeId) => {
+  const partSelect = document.getElementById('partId');
+  if (!partSelect) return;
+  if (!itemTypeId) {
+    applyOptions(partSelect, [], optionLabels.parts);
+    partSelect.disabled = true;
+    partSelect.value = '';
+    return;
+  }
+  try {
+    const items = await fetchCatalog(`part-options?itemTypeId=${encodeURIComponent(itemTypeId)}&active=true`);
+    applyOptions(partSelect, items, optionLabels.parts);
+    partSelect.disabled = false;
+  } catch (_error) {
+    applyOptions(partSelect, [], optionLabels.parts);
+    partSelect.disabled = true;
+  }
+};
+
 const buildSearchParamsFromForm = (mode) => {
   const { values } = getFormState();
   const params = new URLSearchParams();
@@ -814,11 +847,11 @@ const buildSearchParamsFromForm = (mode) => {
   if (mode === MODE_SELL) {
     if (values.side) params.set('side', values.side);
     if (values.position) params.set('position', values.position);
+    if (values.detail) params.set('q', values.detail);
+    return params;
   }
-  if (values.detail || values.extraDetails) {
-    const combined = [values.detail, values.extraDetails].filter(Boolean).join(' ');
-    params.set('q', combined.trim());
-  }
+  if (values.partId) params.set('partId', values.partId);
+  if (values.extraDetails) params.set('q', values.extraDetails);
   return params;
 };
 
@@ -875,9 +908,13 @@ const hydrateRefineForm = async () => {
   document.getElementById('priceInput').value = params.get('expectedPrice') || '';
   const extraDetails = document.getElementById('extraDetails');
   if (extraDetails) extraDetails.value = '';
+  const partSelect = document.getElementById('partId');
+  if (partSelect) partSelect.value = params.get('partId') || '';
 
   await loadItemTypes(null);
   document.getElementById('itemTypeId').value = itemTypeId;
+  await loadParts(itemTypeId || null);
+  if (partSelect) partSelect.value = params.get('partId') || '';
 
   await loadModels(brandId || null);
   document.getElementById('model').value = modelId;
@@ -912,7 +949,13 @@ document.getElementById('brand').addEventListener('change', async (event) => {
   document.getElementById('model').value = '';
   enforceBrandModelDependency();
 });
-['brand', 'model', 'year', 'itemTypeId', 'itemDetail', 'priceInput', 'extraDetails'].forEach((id) => {
+document.getElementById('itemTypeId').addEventListener('change', async (event) => {
+  const itemTypeId = event.target.value || '';
+  await loadParts(itemTypeId || null);
+  const partSelect = document.getElementById('partId');
+  if (partSelect) partSelect.value = '';
+});
+['brand', 'model', 'year', 'itemTypeId', 'itemDetail', 'priceInput', 'extraDetails', 'partId'].forEach((id) => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', updateRequiredValidity);
