@@ -225,6 +225,8 @@ export const searchService = {
     const result = invalid ? { rows: [], count: 0, nextCursor: null } : await searchRepository.searchListings(resolved);
     const hiddenQueueItems = bucketKey ? await listingRepository.getHiddenQueueItems(bucketKey) : [];
     const hiddenListingIds = new Set(hiddenQueueItems.map((item) => item.listing_id));
+    const pricingRows = await listingRepository.getPricingByListingIds(result.rows.map((row) => row.listing_id));
+    const hidePriceMap = new Map(pricingRows.map((row) => [row.listing_id, Boolean(row.hide_price)]));
 
     const hasHiddenQueue = hiddenQueueItems.length >= 2;
     const visibleRows = result.rows.filter((row) => !hasHiddenQueue || !hiddenListingIds.has(row.listing_id));
@@ -258,9 +260,11 @@ export const searchService = {
 
     const visibleCards = visibleRows.map((row) => {
       const isHiddenSingle = hiddenListingIds.has(row.listing_id) && !hasHiddenQueue;
+      const shouldHide = isHiddenSingle || hidePriceMap.get(row.listing_id) === true;
+      const overrides = shouldHide ? { how_much: null } : {};
       return mapRowToCard(row, {
         cardType: 'listing',
-        how_much: isHiddenSingle ? null : undefined
+        ...overrides
       });
     });
 

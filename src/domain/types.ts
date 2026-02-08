@@ -29,6 +29,7 @@ export interface Pricing {
   price_type: string | null;
   price_amount: number | null;
   currency: string | null;
+  hide_price?: boolean | null;
 }
 
 export interface ListingLocation {

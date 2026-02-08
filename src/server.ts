@@ -8,6 +8,7 @@ import meRoutes from './routes/meRoutes';
 import { errorHandler } from './middleware/errorHandler';
 import { requestIdMiddleware } from './middleware/requestId';
 import { authPlaceholder } from './middleware/auth';
+import path from 'path';
 
 const app = express();
 
@@ -20,9 +21,22 @@ app.use((req, _res, next) => {
   next();
 });
 
+const publicDir = path.join(process.cwd(), 'public');
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+app.get('/', (_req, res) => {
+  res.redirect('/search');
+});
+
+app.get(['/search', '/search/', '/search.html'], (_req, res) => {
+  res.sendFile(path.join(publicDir, 'search.html'));
+});
+
+app.use(express.static(publicDir));
+app.use('/app', express.static(publicDir));
 
 app.use('/api/auth', authRoutes);
 app.use('/api', meRoutes);

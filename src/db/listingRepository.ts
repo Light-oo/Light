@@ -122,6 +122,16 @@ export const listingRepository = {
     if (error) throw error;
     return (data ?? null) as Pricing | null;
   },
+  async getPricingByListingIds(listingIds: string[]) {
+    if (!listingIds.length) return [];
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('pricing')
+      .select('listing_id, price_type, price_amount, currency, hide_price')
+      .in('listing_id', listingIds);
+    if (error) throw error;
+    return (data ?? []) as Pricing[];
+  },
   async getLocation(listingId: string) {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
