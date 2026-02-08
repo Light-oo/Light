@@ -163,28 +163,13 @@ export const searchService = {
   async searchListings(query: SearchQueryParams) {
     const { invalid, resolved } = await resolveOptionFilters(query);
     const result = invalid ? { rows: [], count: 0, nextCursor: null } : await searchRepository.searchListings(resolved);
-    const pricingRows = await listingRepository.getPricingByListingIds(result.rows.map((row) => row.listing_id));
-    const hidePriceMap = new Map(pricingRows.map((row) => [row.listing_id, row]));
-
     const cards: ListingCard[] = [];
 
-    const visibleCards = result.rows.map((row) => {
-      const pricing = hidePriceMap.get(row.listing_id);
-      const shouldHide = Boolean(pricing?.hide_price);
-      const overrides = shouldHide
-        ? {
-            how_much: {
-              price_type: 'hidden',
-              price_amount: null,
-              currency: pricing?.currency ?? row.currency ?? null
-            }
-          }
-        : {};
-      return mapRowToCard(row, {
-        cardType: 'listing',
-        ...overrides
-      });
-    });
+    const visibleCards = result.rows.map((row) =>
+      mapRowToCard(row, {
+        cardType: 'listing'
+      })
+    );
 
     cards.push(...visibleCards);
 

@@ -146,15 +146,7 @@ const clearStateRoot = () => {
   stateRootEl.replaceChildren();
 };
 
-const formatPrice = (howMuch) => {
-  if (howMuch?.price_type === 'hidden') {
-    return '?';
-  }
-  if (!howMuch || howMuch.price_type === 'unknown' || howMuch.price_type === 'negotiable' || howMuch.price_amount == null) {
-    return 'Precio a convenir';
-  }
-  return `Precio: ${howMuch.price_amount} ${howMuch.currency || ''}`.trim();
-};
+const formatPrice = (_howMuch) => 'Precio: ?';
 
 const formatYear = (what) => {
   if (!what?.year_from) return '';

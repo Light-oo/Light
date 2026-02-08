@@ -4,7 +4,15 @@ import { searchService } from '../services/searchService';
 
 export const searchListings = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const query = searchQuerySchema.parse(req.query);
+    const raw = req.query as Record<string, unknown>;
+    const normalized = { ...raw };
+    if (normalized.minPrice !== undefined && normalized.priceMin === undefined) {
+      normalized.priceMin = normalized.minPrice;
+    }
+    if (normalized.maxPrice !== undefined && normalized.priceMax === undefined) {
+      normalized.priceMax = normalized.maxPrice;
+    }
+    const query = searchQuerySchema.parse(normalized);
     const result = await searchService.searchListings(query);
     res.json({ ok: true, data: result });
   } catch (error) {
