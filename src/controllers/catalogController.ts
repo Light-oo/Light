@@ -86,3 +86,23 @@ export const getYearOptions = async (req: Request, res: Response, next: NextFunc
     next(error);
   }
 };
+
+export const getPartOptions = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const itemTypeId = typeof req.query.itemTypeId === 'string' ? req.query.itemTypeId : null;
+    if (!itemTypeId) {
+      res.status(400).json({ ok: false, error: 'itemTypeId required' });
+      return;
+    }
+    const active = req.query.active === 'true';
+    const parts = await catalogService.getPartOptions(itemTypeId, active);
+    const mapped = parts.map((part) => ({
+      id: part.part_id,
+      label_es: part.label_es,
+      sort_order: part.sort_order ?? null
+    }));
+    res.json({ ok: true, data: mapped });
+  } catch (error) {
+    next(error);
+  }
+};

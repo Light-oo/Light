@@ -236,6 +236,31 @@ export const listingRepository = {
     if (error) throw error;
     return (data ?? []) as YearOption[];
   },
+  async getPartOptions(itemTypeId: string, activeOnly: boolean) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('part_options_view')
+      .select('*')
+      .eq('item_type_id', itemTypeId);
+    if (error) throw error;
+    let rows = (data ?? []) as Array<Record<string, any>>;
+    if (activeOnly) {
+      rows = rows.filter((row) => row.is_active === true || row.is_active === undefined);
+    }
+    rows.sort((a, b) => {
+      const aOrder = a.sort_order ?? 0;
+      const bOrder = b.sort_order ?? 0;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      const aLabel = (a.label_es ?? a.label ?? '').toString();
+      const bLabel = (b.label_es ?? b.label ?? '').toString();
+      return aLabel.localeCompare(bLabel);
+    });
+    return rows.map((row) => ({
+      part_id: row.part_id ?? row.id,
+      label_es: row.label_es ?? row.label ?? '',
+      sort_order: row.sort_order ?? null
+    }));
+  },
   async getBrandById(id: string) {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase

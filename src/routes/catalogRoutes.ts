@@ -7,7 +7,8 @@ import {
   getModels,
   getSides,
   getPositions,
-  getYearOptions
+  getYearOptions,
+  getPartOptions
 } from '../controllers/catalogController';
 
 const router = Router();
@@ -20,5 +21,6 @@ router.get('/models', getModels);
 router.get('/sides', getSides);
 router.get('/positions', getPositions);
 router.get('/year-options', getYearOptions);
+router.get('/part-options', getPartOptions);
 
 export default router;

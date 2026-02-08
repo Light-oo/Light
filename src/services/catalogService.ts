@@ -44,5 +44,10 @@ export const catalogService = {
   },
   async getYearOptions(activeOnly: boolean) {
     return getCached(`yearOptions:${activeOnly}`, () => listingRepository.getYearOptions(activeOnly));
+  },
+  async getPartOptions(itemTypeId: string, activeOnly: boolean) {
+    return getCached(`partOptions:${itemTypeId}:${activeOnly}`, () =>
+      listingRepository.getPartOptions(itemTypeId, activeOnly)
+    );
   }
 };
