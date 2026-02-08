@@ -11,7 +11,7 @@ const openRefineBtn = document.getElementById('openRefine');
 const sellPublishBtn = document.getElementById('sellPublish');
 const sellSearchBtn = document.getElementById('sellSearch');
 
-const refineFields = ['itemTypeId', 'brand', 'model', 'year', 'side', 'position', 'itemDetail', 'priceInput'];
+const refineFields = ['itemTypeId', 'brand', 'model', 'year', 'side', 'position', 'itemDetail', 'priceInput', 'extraDetails'];
 
 let nextCursor = null;
 let renderedResults = [];
@@ -359,7 +359,7 @@ const setMode = (mode) => {
   if (applyBtn) applyBtn.textContent = normalized === MODE_SELL ? 'Publicar' : 'Buscar';
 
   const priceLabel = document.getElementById('priceLabel');
-  if (priceLabel) priceLabel.textContent = normalized === MODE_SELL ? 'Precio' : 'Precio esperado';
+  if (priceLabel) priceLabel.textContent = 'Precio';
 
   document.body.dataset.mode = normalized;
   updateRequiredValidity();
@@ -756,14 +756,21 @@ const getFormState = () => {
     side: sanitizeValue(document.getElementById('side').value),
     position: sanitizeValue(document.getElementById('position').value),
     detail: sanitizeValue(document.getElementById('itemDetail').value),
+    extraDetails: sanitizeValue(document.getElementById('extraDetails')?.value || ''),
     expectedPrice: priceValue
   };
   const requiredIds = ['brand', 'model', 'year', 'itemTypeId', 'detail'];
   const allFilled = requiredIds.every((key) => values[key]?.length > 0);
-  const priceValid = Number.isFinite(priceValue) && priceValue >= 10 && priceValue <= 1000;
+  if (getMode() === MODE_SELL) {
+    const priceValid = Number.isFinite(priceValue) && priceValue >= 10 && priceValue <= 1000;
+    return {
+      values,
+      isValid: allFilled && priceValid
+    };
+  }
   return {
     values,
-    isValid: allFilled && priceValid
+    isValid: allFilled
   };
 };
 
@@ -797,14 +804,21 @@ const buildSearchParamsFromForm = (mode) => {
   const { values } = getFormState();
   const params = new URLSearchParams();
   params.set('mode', mode);
-  params.set('expectedPrice', `${values.expectedPrice}`);
+  if (mode === MODE_SELL) {
+    params.set('expectedPrice', `${values.expectedPrice}`);
+  }
   if (values.brand) params.set('brand', values.brand);
   if (values.model) params.set('model', values.model);
   if (values.year) params.set('year', values.year);
   if (values.itemTypeId) params.set('itemTypeId', values.itemTypeId);
-  if (values.side) params.set('side', values.side);
-  if (values.position) params.set('position', values.position);
-  if (values.detail) params.set('q', values.detail);
+  if (mode === MODE_SELL) {
+    if (values.side) params.set('side', values.side);
+    if (values.position) params.set('position', values.position);
+  }
+  if (values.detail || values.extraDetails) {
+    const combined = [values.detail, values.extraDetails].filter(Boolean).join(' ');
+    params.set('q', combined.trim());
+  }
   return params;
 };
 
@@ -859,6 +873,8 @@ const hydrateRefineForm = async () => {
   document.getElementById('position').value = params.get('position') || '';
   document.getElementById('itemDetail').value = params.get('q') || '';
   document.getElementById('priceInput').value = params.get('expectedPrice') || '';
+  const extraDetails = document.getElementById('extraDetails');
+  if (extraDetails) extraDetails.value = '';
 
   await loadItemTypes(null);
   document.getElementById('itemTypeId').value = itemTypeId;
@@ -896,7 +912,7 @@ document.getElementById('brand').addEventListener('change', async (event) => {
   document.getElementById('model').value = '';
   enforceBrandModelDependency();
 });
-['brand', 'model', 'year', 'itemTypeId', 'itemDetail', 'priceInput'].forEach((id) => {
+['brand', 'model', 'year', 'itemTypeId', 'itemDetail', 'priceInput', 'extraDetails'].forEach((id) => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', updateRequiredValidity);

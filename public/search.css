@@ -91,6 +91,14 @@ a {
   display: none !important;
 }
 
+[data-mode='BUY'] .sell-only {
+  display: none !important;
+}
+
+[data-mode='SELL'] .buy-only {
+  display: none !important;
+}
+
 .list {
   display: grid;
   gap: var(--space-3);
