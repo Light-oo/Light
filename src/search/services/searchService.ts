@@ -365,7 +365,8 @@ export const searchService = {
             cards.push(
               mapRowToCard(row, {
                 cardType: 'hidden_price',
-                how_much: null
+                how_much: null,
+                location: null
               })
             );
           }
@@ -382,7 +383,7 @@ export const searchService = {
     const visibleCards = visibleRows.map((row) => {
       const isHiddenSingle = hiddenListingIds.has(row.listing_id) && hiddenQueueBuckets.size === 0;
       const shouldHide = isHiddenSingle || hidePriceMap.get(row.listing_id) === true;
-      const overrides = shouldHide ? { how_much: null } : {};
+      const overrides = shouldHide ? { how_much: null, location: null } : {};
       return mapRowToCard(row, {
         cardType: 'listing',
         ...overrides

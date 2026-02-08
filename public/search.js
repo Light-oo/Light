@@ -195,7 +195,7 @@ const qualityLabel = (score) => {
 
 const buildMessage = (listing, contactName) => {
   const item = formatWhat(listing.itemType, listing.what);
-  const location = formatWhere(listing.location);
+  const location = listing.how_much ? formatWhere(listing.location) : '';
   return `Hola ${contactName || ''}, vi tu publicación de ${item}. ¿Me puedes compartir fotos y confirmar disponibilidad? ${location ? `Estoy en ${location}.` : ''}`.trim();
 };
 
@@ -308,7 +308,7 @@ const buildCard = (listing) => {
   price.className = 'price';
   price.textContent = formatPrice(listing.how_much);
 
-  const whereText = formatWhere(listing.location);
+  const whereText = listing.how_much ? formatWhere(listing.location) : '';
   const where = document.createElement('div');
   where.textContent = whereText;
 
