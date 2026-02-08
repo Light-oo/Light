@@ -132,10 +132,14 @@ const requireDefined = <T>(value: T | undefined, field: string): T => {
 };
 
 const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard => {
-  const price =
+  const priceRaw =
     cardType === 'sell'
-      ? requireField<number>(row.price_amount, 'price_amount')
-      : requireField<number>(row.expected_price_amount, 'expected_price_amount');
+      ? row.price_amount
+      : row.expected_price_amount ?? row.price_amount;
+  const price = requireField<number>(
+    priceRaw,
+    cardType === 'sell' ? 'price_amount' : 'expected_price_amount'
+  );
   const priceTypeRaw =
     cardType === 'buy' ? row.expected_price_type ?? row.price_type : row.price_type;
   const priceType = requireField<string>(
@@ -205,6 +209,11 @@ export const searchService = {
       } else {
         const itemType = await listingRepository.getItemType(resolved.itemTypeId);
         sellItemTypeValue = itemType?.label_es ?? itemType?.key ?? resolved.itemTypeId;
+        if (sellItemTypeValue) {
+          builder = builder.or(
+            `item_type.eq.${sellItemTypeValue},item_type_label_es.eq.${sellItemTypeValue},item_type_key.eq.${sellItemTypeValue}`
+          );
+        }
       }
     }
     if (resolved.brand) builder = builder.eq('brand', resolved.brand);
@@ -212,6 +221,8 @@ export const searchService = {
     if (resolved.year) {
       if (mode === 'BUY') {
         builder = builder.lte('year_from', resolved.year).gte('year_to', resolved.year);
+      } else {
+        builder = builder.eq('year', resolved.year);
       }
     }
     if (resolved.q) builder = builder.ilike('part_text', `%${resolved.q}%`);
@@ -220,27 +231,28 @@ export const searchService = {
     const end = start + query.pageSize - 1;
     builder = builder.range(start, end);
 
+    if (mode === 'SELL') {
+      console.log('sell_search_query', {
+        view: viewName,
+        filters: {
+          brand: resolved.brand ?? null,
+          model: resolved.model ?? null,
+          year: resolved.year ?? null,
+          itemType: sellItemTypeValue ?? null
+        },
+        range: { start, end }
+      });
+    }
+
     const { data, error, count } = await builder;
     if (error) throw error;
 
     let rows = (data ?? []) as any[];
     if (mode === 'SELL') {
-      if (sellItemTypeValue) {
-        rows = rows.filter((row) => {
-          const rowItemType =
-            row.item_type ?? row.item_type_label_es ?? row.item_type_key ?? row.item_type_id ?? null;
-          return rowItemType === sellItemTypeValue;
-        });
-      }
-      if (resolved.year) {
-        rows = rows.filter((row) => {
-          const rowYear = row.year ?? row.year_from ?? row.year_to ?? null;
-          if (row.year_from != null && row.year_to != null) {
-            return resolved.year >= row.year_from && resolved.year <= row.year_to;
-          }
-          return rowYear === resolved.year;
-        });
-      }
+      console.log('sell_search_result', {
+        rowCount: rows.length,
+        totalCount: count ?? null
+      });
     }
     const cards: ListingCard[] = [];
     rows.forEach((row) => {
