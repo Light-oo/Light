@@ -49,16 +49,6 @@ export const searchQuerySchema = z
   pageSize: toOptionalNumber(z.number().int().min(1).max(50)).default(20),
   cursor: toOptionalString(),
   q: toOptionalString()
-})
-  .superRefine((value, ctx) => {
-    const mode = value.mode.toString().toUpperCase();
-    if (mode === 'BUY' && value.expectedPrice === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'expectedPrice is required for BUY',
-        path: ['expectedPrice']
-      });
-    }
   });
 
 export type SearchQueryParams = z.infer<typeof searchQuerySchema>;

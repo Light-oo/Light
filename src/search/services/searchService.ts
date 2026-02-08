@@ -270,7 +270,14 @@ export const searchService = {
     if (mode === 'BUY' && cards.length === 0) {
       const expectedPrice = query.expectedPrice;
       if (expectedPrice == null) {
-        throw badRequest('expected_price_required');
+        return {
+          page: query.page,
+          pageSize: query.pageSize,
+          total: count ?? 0,
+          nextCursor: null,
+          results: [],
+          autoCreated: false
+        };
       }
 
       let profileId: string | null = null;
