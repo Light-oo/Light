@@ -21,6 +21,7 @@ type ListingCard = {
     price_type: string | null;
     price_amount: number | null;
     currency: string | null;
+    hide_price?: boolean | null;
   } | null;
   location?: { department: string | null; municipality: string | null } | null;
   audit: { published_at: string | null; updated_at?: string | null };
@@ -163,11 +164,19 @@ export const searchService = {
   async searchListings(query: SearchQueryParams) {
     const { invalid, resolved } = await resolveOptionFilters(query);
     const result = invalid ? { rows: [], count: 0, nextCursor: null } : await searchRepository.searchListings(resolved);
+    const pricingRows = await listingRepository.getPricingByListingIds(result.rows.map((row) => row.listing_id));
+    const hidePriceMap = new Map(pricingRows.map((row) => [row.listing_id, row.hide_price ?? null]));
     const cards: ListingCard[] = [];
 
     const visibleCards = result.rows.map((row) =>
       mapRowToCard(row, {
-        cardType: 'listing'
+        cardType: 'listing',
+        how_much: {
+          price_type: row.price_type,
+          price_amount: row.price_amount,
+          currency: row.currency,
+          hide_price: hidePriceMap.get(row.listing_id) ?? null
+        }
       })
     );
 

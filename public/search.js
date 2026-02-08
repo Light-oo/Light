@@ -5,18 +5,9 @@ import { savePendingAuthAction, consumeAuthRetryAction } from '/app/auth-flow.js
 const stateRootEl = document.getElementById('searchStateRoot');
 const refineOverlay = document.getElementById('refineOverlay');
 const toastEl = document.getElementById('toast');
-const marketLabel = document.getElementById('marketLabel');
 const querySummaryEl = document.getElementById('querySummary');
 
-const refineFields = [
-  'marketId',
-  'itemTypeId',
-  'brand',
-  'model',
-  'year',
-  'side',
-  'position'
-];
+const refineFields = ['itemTypeId', 'brand', 'model', 'year', 'side', 'position'];
 
 let nextCursor = null;
 let renderedResults = [];
@@ -26,13 +17,12 @@ let listedById = new Map();
 const DEFAULT_LOCATION_KEY = 'pilotDefaultLocation';
 const LAST_SEARCH_LOCATION_KEY = 'pilotLastSearchLocation';
 const REVEALED_CONTACTS_KEY = 'pilotRevealedContacts';
-const MODE_KEY = 'pilotSearchMode';
-const MODE_BUY = 'BUY';
-const MODE_SELL = 'SELL';
+const MODE_KEY = 'pilotMode';
+const MODE_BUY = 'buy';
+const MODE_SELL = 'sell';
 const WHATSAPP_KEY = 'pilotWhatsapp';
 
 const optionLabels = {
-  markets: new Map(),
   itemTypes: new Map(),
   brands: new Map(),
   models: new Map(),
@@ -152,7 +142,11 @@ const clearStateRoot = () => {
   stateRootEl.replaceChildren();
 };
 
-const formatPrice = (_howMuch) => 'Precio: ?';
+const formatPrice = (howMuch) => {
+  if (howMuch?.hide_price) return 'Precio: ?';
+  if (howMuch?.price_amount == null) return 'Precio: ?';
+  return `Precio: ${howMuch.price_amount} ${howMuch.currency || ''}`.trim();
+};
 
 const formatYear = (what) => {
   if (!what?.year_from) return '';
@@ -360,10 +354,13 @@ const setMode = (mode) => {
   localStorage.setItem(MODE_KEY, normalized);
   const modeToggle = document.getElementById('modeToggle');
   const sellFields = document.getElementById('sellFields');
+  const buyDetails = document.getElementById('buyDetailsField');
   const applyBtn = document.getElementById('applyRefine');
   if (modeToggle) modeToggle.textContent = normalized;
   if (sellFields) sellFields.hidden = normalized !== MODE_SELL;
+  if (buyDetails) buyDetails.hidden = normalized !== MODE_BUY;
   if (applyBtn) applyBtn.textContent = normalized === MODE_SELL ? 'Publicar' : 'Aplicar';
+  updateSellValidity();
   document.body.dataset.mode = normalized;
 };
 
@@ -385,9 +382,14 @@ const getAccountName = async () => {
 const publishListing = async () => {
   const priceInput = document.getElementById('sellPrice');
   const hidePriceInput = document.getElementById('sellHidePrice');
+  const detailInput = document.getElementById('sellItemDetail');
   const priceValue = Number(priceInput?.value);
   if (!Number.isFinite(priceValue) || priceValue < 10 || priceValue > 1000) {
     showToast('Ingresa un precio entre 10 y 1000.');
+    return;
+  }
+  if (!detailInput?.value?.trim()) {
+    showToast('Ingresa la pieza.');
     return;
   }
 
@@ -407,7 +409,7 @@ const publishListing = async () => {
 
   const contactName = (await getAccountName()) || whatsapp;
 
-  const marketId = sanitizeValue(document.getElementById('marketId').value);
+  const marketId = null;
   const brandId = sanitizeValue(document.getElementById('brand').value);
   const modelId = sanitizeValue(document.getElementById('model').value);
   const yearId = sanitizeValue(document.getElementById('year').value);
@@ -421,6 +423,11 @@ const publishListing = async () => {
   const yearValue = yearLabel ? Number(yearLabel) : null;
   const side = sideId ? optionLabels.sides.get(sideId) || sideId : null;
   const position = positionId ? optionLabels.positions.get(positionId) || positionId : null;
+  const itemDetail = detailInput?.value?.trim() || null;
+  if (!brandId || !modelId || !yearId || !itemTypeId) {
+    showToast('Completa los campos requeridos.');
+    return;
+  }
 
   try {
     const draftResponse = await fetch('/listings/draft', {
@@ -457,7 +464,8 @@ const publishListing = async () => {
           yearFrom: Number.isFinite(yearValue) ? yearValue : null,
           yearTo: Number.isFinite(yearValue) ? yearValue : null,
           side,
-          position
+          position,
+          detail: itemDetail
         },
         howMuch: {
           priceType: 'fixed',
@@ -497,12 +505,6 @@ const publishListing = async () => {
   } catch (_error) {
     showToast('Error al publicar.');
   }
-};
-
-const updateMarketLabel = (params) => {
-  const marketId = params.get('marketId');
-  const label = marketId ? optionLabels.markets.get(marketId) : null;
-  marketLabel.textContent = `Mercado: ${label || 'Todos'}`;
 };
 
 const updateQuerySummary = (params) => {
@@ -762,22 +764,33 @@ const loadModels = async (brandId) => {
   }
 };
 
+const updateSellValidity = () => {
+  const applyBtn = document.getElementById('applyRefine');
+  if (!applyBtn || getMode() !== MODE_SELL) {
+    if (applyBtn) applyBtn.disabled = false;
+    return;
+  }
+  const requiredIds = ['brand', 'model', 'year', 'itemTypeId', 'sellItemDetail', 'sellPrice'];
+  const values = requiredIds.map((id) => document.getElementById(id)?.value?.toString().trim() || '');
+  const allFilled = values.every((value) => value.length > 0);
+  const priceValue = Number(document.getElementById('sellPrice')?.value);
+  const priceValid = Number.isFinite(priceValue) && priceValue >= 10 && priceValue <= 1000;
+  applyBtn.disabled = !(allFilled && priceValid);
+};
+
 const loadStaticOptions = async () => {
-  const marketSelect = document.getElementById('marketId');
   const brandSelect = document.getElementById('brand');
   const sideSelect = document.getElementById('side');
   const positionSelect = document.getElementById('position');
   const yearSelect = document.getElementById('year');
 
-  const [markets, brands, sides, positions, years] = await Promise.all([
-    fetchCatalogSafe('markets?active=true'),
+  const [brands, sides, positions, years] = await Promise.all([
     fetchCatalogSafe('brands?active=true'),
     fetchCatalogSafe('sides?active=true'),
     fetchCatalogSafe('positions?active=true'),
     fetchCatalogSafe('year-options?active=true')
   ]);
 
-  applyOptions(marketSelect, markets, optionLabels.markets);
   applyOptions(brandSelect, brands, optionLabels.brands);
   applyOptions(sideSelect, sides, optionLabels.sides);
   applyOptions(positionSelect, positions, optionLabels.positions);
@@ -791,25 +804,24 @@ const applyRefine = () => {
     return;
   }
   const params = new URLSearchParams();
-  const marketId = sanitizeValue(document.getElementById('marketId').value);
   const brand = sanitizeValue(document.getElementById('brand').value);
   const model = sanitizeValue(document.getElementById('model').value);
   const year = sanitizeValue(document.getElementById('year').value);
   const itemTypeId = sanitizeValue(document.getElementById('itemTypeId').value);
   const side = sanitizeValue(document.getElementById('side').value);
   const position = sanitizeValue(document.getElementById('position').value);
+  const detail = sanitizeValue(document.getElementById('buyDetail').value);
 
-  if (marketId) params.set('marketId', marketId);
   if (brand) params.set('brand', brand);
   if (brand && model) params.set('model', model);
   if (year) params.set('year', year);
   if (itemTypeId) params.set('itemTypeId', itemTypeId);
   if (side) params.set('side', side);
   if (position) params.set('position', position);
+  if (detail) params.set('q', detail);
 
   window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
   closeOverlay(refineOverlay);
-  updateMarketLabel(params);
   updateQuerySummary(params);
   const paramsWithLocation = withPreferredLocation(params);
   persistLastSearchLocation(paramsWithLocation);
@@ -822,12 +834,15 @@ const resetRefine = async () => {
   });
   const sellPrice = document.getElementById('sellPrice');
   const sellHidePrice = document.getElementById('sellHidePrice');
+  const sellItemDetail = document.getElementById('sellItemDetail');
+  const buyDetail = document.getElementById('buyDetail');
   if (sellPrice) sellPrice.value = '';
   if (sellHidePrice) sellHidePrice.checked = false;
+  if (sellItemDetail) sellItemDetail.value = '';
+  if (buyDetail) buyDetail.value = '';
   window.history.replaceState({}, '', window.location.pathname);
   closeOverlay(refineOverlay);
   const params = new URLSearchParams();
-  updateMarketLabel(params);
   updateQuerySummary(params);
   await loadItemTypes(null);
   await loadModels(null);
@@ -838,18 +853,17 @@ const resetRefine = async () => {
 
 const hydrateRefineForm = async () => {
   const params = currentParams();
-  const marketId = params.get('marketId') || '';
   const brandId = params.get('brand') || '';
   const modelId = params.get('model') || '';
   const itemTypeId = params.get('itemTypeId') || '';
 
-  document.getElementById('marketId').value = marketId;
   document.getElementById('brand').value = brandId;
   document.getElementById('year').value = params.get('year') || '';
   document.getElementById('side').value = params.get('side') || '';
   document.getElementById('position').value = params.get('position') || '';
+  document.getElementById('buyDetail').value = params.get('q') || '';
 
-  await loadItemTypes(marketId || null);
+  await loadItemTypes(null);
   document.getElementById('itemTypeId').value = itemTypeId;
 
   await loadModels(brandId || null);
@@ -874,10 +888,12 @@ document.getElementById('brand').addEventListener('change', async (event) => {
   document.getElementById('model').value = '';
   enforceBrandModelDependency();
 });
-document.getElementById('marketId').addEventListener('change', async (event) => {
-  const marketId = event.target.value || '';
-  await loadItemTypes(marketId || null);
-  document.getElementById('itemTypeId').value = '';
+['brand', 'model', 'year', 'itemTypeId', 'sellItemDetail', 'sellPrice'].forEach((id) => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', updateSellValidity);
+    el.addEventListener('change', updateSellValidity);
+  }
 });
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -889,7 +905,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     // keep defaults if catalog fetch fails
   }
   await hydrateRefineForm();
-  updateMarketLabel(params);
   updateQuerySummary(params);
   const paramsWithLocation = withPreferredLocation(params);
   persistLastSearchLocation(paramsWithLocation);

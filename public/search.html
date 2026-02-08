@@ -11,7 +11,6 @@
       <header class="header">
         <div>
           <div class="title">Buscar repuestos</div>
-          <div class="market" id="marketLabel">Mercado: Todos</div>
           <div class="market" id="querySummary"></div>
         </div>
         <div class="header-actions">
@@ -27,31 +26,25 @@
       <div class="sheet">
         <div class="title">Refinar búsqueda</div>
         <div class="field">
-          <label class="label" for="marketId">Mercado (opcional)</label>
-          <select id="marketId">
-            <option value="">Todos</option>
-          </select>
-        </div>
-        <div class="field">
-          <label class="label" for="brand">Marca</label>
+          <label class="label required-when-sell" for="brand">Marca</label>
           <select id="brand">
             <option value="">Todas</option>
           </select>
         </div>
         <div class="field">
-          <label class="label" for="model">Modelo</label>
+          <label class="label required-when-sell" for="model">Modelo</label>
           <select id="model">
             <option value="">Todos</option>
           </select>
         </div>
         <div class="field">
-          <label class="label" for="year">Año exacto</label>
+          <label class="label required-when-sell" for="year">Año exacto</label>
           <select id="year">
             <option value="">Cualquiera</option>
           </select>
         </div>
         <div class="field">
-          <label class="label" for="itemTypeId">Tipo de pieza (opcional)</label>
+          <label class="label required-when-sell" for="itemTypeId">Tipo de pieza</label>
           <select id="itemTypeId">
             <option value="">Todas</option>
           </select>
@@ -68,16 +61,26 @@
             <option value="">Cualquiera</option>
           </select>
         </div>
+        <div class="field" id="buyDetailsField">
+          <label class="label" for="buyDetail">Detalles adicionales</label>
+          <input id="buyDetail" type="text" placeholder="Detalles que ayuden a encontrar la pieza" />
+        </div>
         <div id="sellFields" hidden>
           <div class="field">
-            <label class="label" for="sellPrice">Precio</label>
-            <input id="sellPrice" type="number" min="10" max="1000" step="1" required />
+            <label class="label" for="sellItemDetail">Pieza <span class="required">*</span></label>
+            <input id="sellItemDetail" type="text" placeholder="Ej: Bumper delantero" required />
           </div>
-          <div class="field">
-            <label class="label">
-              <input id="sellHidePrice" type="checkbox" />
-              Ocultar precio
-            </label>
+          <div class="field-row">
+            <div class="field field-half">
+              <label class="label" for="sellPrice">Precio <span class="required">*</span></label>
+              <input id="sellPrice" type="number" min="10" max="1000" step="1" required />
+            </div>
+            <div class="field checkbox-field">
+              <label class="label">
+                <input id="sellHidePrice" type="checkbox" />
+                Ocultar precio
+              </label>
+            </div>
           </div>
         </div>
         <div class="actions">
