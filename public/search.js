@@ -1,25 +1,30 @@
-﻿import { requestListings } from '/app/search/api.js';
-import { createSearchStateEngine } from '/app/search/stateEngine.js';
+﻿import { createSearchStateEngine } from '/app/search/stateEngine.js';
 import { savePendingAuthAction, consumeAuthRetryAction } from '/app/auth-flow.js';
 
 const stateRootEl = document.getElementById('searchStateRoot');
 const refineOverlay = document.getElementById('refineOverlay');
 const toastEl = document.getElementById('toast');
 const querySummaryEl = document.getElementById('querySummary');
+const refineTitleEl = document.getElementById('refineTitle');
+const modeToggleBtn = document.getElementById('modeToggle');
+const openRefineBtn = document.getElementById('openRefine');
+const sellPublishBtn = document.getElementById('sellPublish');
+const sellSearchBtn = document.getElementById('sellSearch');
 
-const refineFields = ['itemTypeId', 'brand', 'model', 'year', 'side', 'position'];
+const refineFields = ['itemTypeId', 'brand', 'model', 'year', 'side', 'position', 'itemDetail', 'priceInput'];
 
 let nextCursor = null;
 let renderedResults = [];
 let listedById = new Map();
-
+let lastAutoCreated = false;
+let sellHasSearched = false;
 
 const DEFAULT_LOCATION_KEY = 'pilotDefaultLocation';
 const LAST_SEARCH_LOCATION_KEY = 'pilotLastSearchLocation';
 const REVEALED_CONTACTS_KEY = 'pilotRevealedContacts';
 const MODE_KEY = 'pilotMode';
-const MODE_BUY = 'buy';
-const MODE_SELL = 'sell';
+const MODE_BUY = 'BUY';
+const MODE_SELL = 'SELL';
 const WHATSAPP_KEY = 'pilotWhatsapp';
 
 const optionLabels = {
@@ -135,31 +140,26 @@ const persistLastSearchLocation = (params) => {
 const showToast = (message) => {
   toastEl.textContent = message;
   toastEl.classList.add('show');
-  setTimeout(() => toastEl.classList.remove('show'), 2400);
+  setTimeout(() => toastEl.classList.remove('show'), 2600);
 };
 
 const clearStateRoot = () => {
   stateRootEl.replaceChildren();
 };
 
-const formatPrice = (howMuch) => {
-  if (howMuch?.hide_price) return 'Precio: ?';
-  if (howMuch?.price_amount == null) return 'Precio: ?';
-  return `Precio: ${howMuch.price_amount} ${howMuch.currency || ''}`.trim();
+const formatPrice = (listing) => {
+  if (listing?.price == null) return 'Precio: —';
+  const suffix = listing.price_type === 'negotiable' ? ' (Negociable)' : '';
+  return `Precio: ${listing.price}${suffix}`;
 };
 
-const formatYear = (what) => {
-  if (!what?.year_from) return '';
-  if (!what.year_to || what.year_from === what.year_to) return `${what.year_from}`;
-  return `${what.year_from}–${what.year_to}`;
-};
-
-const formatWhat = (itemType, what) => {
-  const parts = [what?.brand, what?.model, formatYear(what), what?.side, what?.position]
+const formatWhat = (listing) => {
+  const what = listing?.what || {};
+  const parts = [what.brand, what.model, what.year, what.partText]
     .filter(Boolean)
     .map((value) => value.toString().trim())
     .filter(Boolean);
-  const itemLabel = itemType?.label_es || itemType?.key || 'Pieza';
+  const itemLabel = what.itemType || 'Pieza';
   return [itemLabel, ...parts].join(' · ');
 };
 
@@ -169,9 +169,9 @@ const formatWhere = (location) => {
   return parts.join(', ');
 };
 
-const formatTime = (publishedAt) => {
-  if (!publishedAt) return '';
-  const published = new Date(publishedAt);
+const formatTime = (createdAt) => {
+  if (!createdAt) return '';
+  const published = new Date(createdAt);
   const now = new Date();
   const diffMs = now.getTime() - published.getTime();
   const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -181,15 +181,8 @@ const formatTime = (publishedAt) => {
   return `Publicado hace ${days} días`;
 };
 
-const qualityLabel = (score) => {
-  if (score == null) return 'Sin señal';
-  if (score >= 70) return 'Confiable';
-  if (score >= 40) return 'Revisar';
-  return 'Nuevo';
-};
-
 const buildMessage = (listing, contactName) => {
-  const item = formatWhat(listing.itemType, listing.what);
+  const item = formatWhat(listing);
   const location = formatWhere(listing.location);
   return `Hola ${contactName || ''}, vi tu publicación de ${item}. ¿Me puedes compartir fotos y confirmar disponibilidad? ${location ? `Estoy en ${location}.` : ''}`.trim();
 };
@@ -215,6 +208,7 @@ const setContactButtonState = (button, revealed) => {
 };
 
 const revealContact = async (listing, button) => {
+  if (!listing?.listingId) return;
   const storedContact = getStoredContact(listing.listingId);
   if (storedContact?.whatsapp_e164) {
     setContactButtonState(button, true);
@@ -290,18 +284,18 @@ const buildCard = (listing) => {
 
   const title = document.createElement('div');
   title.className = 'card-title';
-  title.textContent = formatWhat(listing.itemType, listing.what);
+  title.textContent = formatWhat(listing);
 
   const badge = document.createElement('div');
   badge.className = 'badge';
-  badge.textContent = qualityLabel(listing.quality_score);
+  badge.textContent = listing.cardType === 'buy' ? 'Solicitud' : 'Oferta';
 
   const meta = document.createElement('div');
   meta.className = 'meta';
 
   const price = document.createElement('div');
   price.className = 'price';
-  price.textContent = formatPrice(listing.how_much);
+  price.textContent = formatPrice(listing);
 
   const whereText = formatWhere(listing.location);
   const where = document.createElement('div');
@@ -309,19 +303,12 @@ const buildCard = (listing) => {
 
   const time = document.createElement('div');
   time.className = 'time';
-  time.textContent = formatTime(listing.audit?.published_at);
+  time.textContent = formatTime(listing.audit?.created_at);
 
   const actions = document.createElement('div');
   actions.className = 'actions';
 
-  const cardType = listing.cardType || 'listing';
-  if (cardType === 'actionable') {
-    const actionBtn = document.createElement('a');
-    actionBtn.className = 'btn btn-primary btn-block';
-    actionBtn.textContent = 'Crear solicitud';
-    actionBtn.href = `/app/demand.html?${demandPrefillParamsFromSearch(currentParams()).toString()}`;
-    actions.appendChild(actionBtn);
-  } else {
+  if (listing.cardType !== 'buy' && listing.listingId) {
     const contactBtn = document.createElement('button');
     contactBtn.className = 'btn btn-success btn-block';
     const storedContact = getStoredContact(listing.listingId);
@@ -338,7 +325,9 @@ const buildCard = (listing) => {
   if (time.textContent) meta.appendChild(time);
   card.appendChild(header);
   card.appendChild(meta);
-  card.appendChild(actions);
+  if (actions.children.length > 0) {
+    card.appendChild(actions);
+  }
 
   return card;
 };
@@ -352,16 +341,28 @@ const getMode = () => {
 const setMode = (mode) => {
   const normalized = mode === MODE_SELL ? MODE_SELL : MODE_BUY;
   localStorage.setItem(MODE_KEY, normalized);
-  const modeToggle = document.getElementById('modeToggle');
-  const sellFields = document.getElementById('sellFields');
-  const buyDetails = document.getElementById('buyDetailsField');
+  if (modeToggleBtn) modeToggleBtn.textContent = normalized;
+
+  if (normalized === MODE_SELL) {
+    openRefineBtn.classList.add('hidden');
+    sellPublishBtn.classList.remove('hidden');
+    sellSearchBtn.classList.remove('hidden');
+    if (refineTitleEl) refineTitleEl.textContent = 'Publicar oferta';
+  } else {
+    openRefineBtn.classList.remove('hidden');
+    sellPublishBtn.classList.add('hidden');
+    sellSearchBtn.classList.add('hidden');
+    if (refineTitleEl) refineTitleEl.textContent = 'Buscar';
+  }
+
   const applyBtn = document.getElementById('applyRefine');
-  if (modeToggle) modeToggle.textContent = normalized;
-  if (sellFields) sellFields.hidden = normalized !== MODE_SELL;
-  if (buyDetails) buyDetails.hidden = normalized !== MODE_BUY;
-  if (applyBtn) applyBtn.textContent = normalized === MODE_SELL ? 'Publicar' : 'Aplicar';
-  updateSellValidity();
+  if (applyBtn) applyBtn.textContent = normalized === MODE_SELL ? 'Publicar' : 'Buscar';
+
+  const priceLabel = document.getElementById('priceLabel');
+  if (priceLabel) priceLabel.textContent = normalized === MODE_SELL ? 'Precio' : 'Precio esperado';
+
   document.body.dataset.mode = normalized;
+  updateRequiredValidity();
 };
 
 const getAccountName = async () => {
@@ -380,9 +381,8 @@ const getAccountName = async () => {
 };
 
 const publishListing = async () => {
-  const priceInput = document.getElementById('sellPrice');
-  const hidePriceInput = document.getElementById('sellHidePrice');
-  const detailInput = document.getElementById('sellItemDetail');
+  const priceInput = document.getElementById('priceInput');
+  const detailInput = document.getElementById('itemDetail');
   const priceValue = Number(priceInput?.value);
   if (!Number.isFinite(priceValue) || priceValue < 10 || priceValue > 1000) {
     showToast('Ingresa un precio entre 10 y 1000.');
@@ -424,7 +424,7 @@ const publishListing = async () => {
   const side = sideId ? optionLabels.sides.get(sideId) || sideId : null;
   const position = positionId ? optionLabels.positions.get(positionId) || positionId : null;
   const itemDetail = detailInput?.value?.trim() || null;
-  if (!brandId || !modelId || !yearId || !itemTypeId) {
+  if (!brandId || !modelId || !yearId || !itemTypeId || !itemDetail) {
     showToast('Completa los campos requeridos.');
     return;
   }
@@ -470,8 +470,7 @@ const publishListing = async () => {
         howMuch: {
           priceType: 'fixed',
           priceAmount: priceValue,
-          currency: 'USD',
-          hidePrice: Boolean(hidePriceInput?.checked)
+          currency: 'USD'
         },
         location: {
           department: location.department || '',
@@ -524,65 +523,6 @@ const updateQuerySummary = (params) => {
   querySummaryEl.textContent = tokens.join(' · ');
 };
 
-const demandPrefillParamsFromSearch = (params) => {
-  const allowed = ['brand', 'model', 'year', 'itemTypeId', 'side', 'position'];
-  const query = new URLSearchParams();
-  allowed.forEach((key) => {
-    const value = params.get(key);
-    if (value) {
-      query.set(key, value);
-    }
-  });
-  return query;
-};
-
-const hashString = (value) => {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 33) ^ value.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(16);
-};
-
-const buildActionableCardFromParams = (params) => {
-  const parts = [];
-  ['marketId', 'itemTypeId', 'brand', 'model', 'year', 'side', 'position', 'department', 'municipality', 'q'].forEach((key) => {
-    const value = params.get(key);
-    if (value) parts.push(`${key}=${encodeURIComponent(value)}`);
-  });
-  const signature = parts.join('|');
-  const brandId = params.get('brand');
-  const modelId = params.get('model');
-  const yearId = params.get('year');
-  const itemTypeId = params.get('itemTypeId');
-  const sideId = params.get('side');
-  const positionId = params.get('position');
-
-  return {
-    listingId: `actionable:${hashString(signature)}`,
-    cardType: 'actionable',
-    marketId: params.get('marketId') || null,
-    itemType: itemTypeId
-      ? {
-          id: itemTypeId,
-          label_es: optionLabels.itemTypes.get(itemTypeId) || itemTypeId
-        }
-      : null,
-    what: {
-      brand: brandId ? optionLabels.brands.get(brandId) || brandId : null,
-      model: modelId ? optionLabels.models.get(modelId) || modelId : null,
-      year_from: yearId ? Number(yearId) : null,
-      year_to: yearId ? Number(yearId) : null,
-      side: sideId ? optionLabels.sides.get(sideId) || sideId : null,
-      position: positionId ? optionLabels.positions.get(positionId) || positionId : null
-    },
-    how_much: null,
-    location: null,
-    audit: { published_at: new Date().toISOString() },
-    quality_score: 0
-  };
-};
-
 const loadMore = async (button) => {
   if (!nextCursor) return;
   button.disabled = true;
@@ -619,7 +559,7 @@ const onRenderLoading = () => {
 const onRenderResults = (items, upcomingCursor) => {
   nextCursor = upcomingCursor;
   renderedResults = items;
-  listedById = new Map(items.filter((item) => item.cardType !== 'actionable').map((item) => [item.listingId, item]));
+  listedById = new Map(items.filter((item) => item.listingId).map((item) => [item.listingId, item]));
   clearStateRoot();
 
   const wrapper = document.createElement('div');
@@ -660,12 +600,19 @@ const onRenderEmpty = () => {
   renderedResults = [];
   clearStateRoot();
 
-  const params = currentParams();
-  const actionable = buildActionableCardFromParams(params);
-  const list = document.createElement('section');
-  list.className = 'list';
-  list.appendChild(buildCard(actionable));
-  stateRootEl.appendChild(list);
+  if (getMode() === MODE_BUY && lastAutoCreated) {
+    showToast('Solicitud creada. Te avisaremos cuando aparezcan ofertas.');
+    const notice = document.createElement('div');
+    notice.className = 'notice';
+    notice.textContent = 'Solicitud creada. Te avisaremos cuando aparezcan ofertas.';
+    stateRootEl.appendChild(notice);
+    return;
+  }
+
+  const empty = document.createElement('div');
+  empty.className = 'empty';
+  empty.textContent = 'No hay resultados aún.';
+  stateRootEl.appendChild(empty);
 };
 
 const onRenderError = (_error, onRetry) => {
@@ -691,6 +638,48 @@ const onRenderError = (_error, onRetry) => {
   error.appendChild(helper);
   error.appendChild(retryBtn);
   stateRootEl.appendChild(error);
+};
+
+const requestListings = async (params, cursor) => {
+  const query = new URLSearchParams();
+  const source = params instanceof URLSearchParams ? params : new URLSearchParams(params || {});
+
+  source.forEach((value, key) => {
+    if (value !== '' && value != null) {
+      query.set(key, value);
+    }
+  });
+
+  if (cursor) {
+    query.set('cursor', cursor);
+  }
+
+  if (!query.get('pageSize')) query.set('pageSize', '10');
+  if (!query.get('sort')) query.set('sort', 'newest');
+
+  const response = await fetch(`/search/listings?${query.toString()}`);
+  if (!response.ok) {
+    throw new Error(`search_failed_${response.status}`);
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (_error) {
+    throw new Error('search_invalid_json');
+  }
+
+  const data = payload?.ok === true && payload?.data ? payload.data : payload;
+  if (!data || !Array.isArray(data.results)) {
+    throw new Error('search_invalid_payload');
+  }
+
+  lastAutoCreated = Boolean(data.autoCreated);
+
+  return {
+    items: data.results,
+    nextCursor: data.nextCursor || null
+  };
 };
 
 const engine = createSearchStateEngine({
@@ -729,13 +718,6 @@ const enforceBrandModelDependency = () => {
   }
 };
 
-const enforceItemTypeDependency = () => {
-  const sideInput = document.getElementById('side');
-  const positionInput = document.getElementById('position');
-  sideInput.disabled = false;
-  positionInput.disabled = false;
-};
-
 const loadItemTypes = async (marketId) => {
   const itemTypeSelect = document.getElementById('itemTypeId');
   try {
@@ -764,18 +746,32 @@ const loadModels = async (brandId) => {
   }
 };
 
-const updateSellValidity = () => {
-  const applyBtn = document.getElementById('applyRefine');
-  if (!applyBtn || getMode() !== MODE_SELL) {
-    if (applyBtn) applyBtn.disabled = false;
-    return;
-  }
-  const requiredIds = ['brand', 'model', 'year', 'itemTypeId', 'sellItemDetail', 'sellPrice'];
-  const values = requiredIds.map((id) => document.getElementById(id)?.value?.toString().trim() || '');
-  const allFilled = values.every((value) => value.length > 0);
-  const priceValue = Number(document.getElementById('sellPrice')?.value);
+const getFormState = () => {
+  const priceValue = Number(document.getElementById('priceInput')?.value);
+  const values = {
+    brand: sanitizeValue(document.getElementById('brand').value),
+    model: sanitizeValue(document.getElementById('model').value),
+    year: sanitizeValue(document.getElementById('year').value),
+    itemTypeId: sanitizeValue(document.getElementById('itemTypeId').value),
+    side: sanitizeValue(document.getElementById('side').value),
+    position: sanitizeValue(document.getElementById('position').value),
+    detail: sanitizeValue(document.getElementById('itemDetail').value),
+    expectedPrice: priceValue
+  };
+  const requiredIds = ['brand', 'model', 'year', 'itemTypeId', 'detail'];
+  const allFilled = requiredIds.every((key) => values[key]?.length > 0);
   const priceValid = Number.isFinite(priceValue) && priceValue >= 10 && priceValue <= 1000;
-  applyBtn.disabled = !(allFilled && priceValid);
+  return {
+    values,
+    isValid: allFilled && priceValid
+  };
+};
+
+const updateRequiredValidity = () => {
+  const { isValid } = getFormState();
+  const applyBtn = document.getElementById('applyRefine');
+  if (applyBtn) applyBtn.disabled = !isValid;
+  if (sellSearchBtn) sellSearchBtn.disabled = getMode() === MODE_SELL ? !isValid : true;
 };
 
 const loadStaticOptions = async () => {
@@ -797,58 +793,58 @@ const loadStaticOptions = async () => {
   applyOptions(yearSelect, years, optionLabels.years);
 };
 
+const buildSearchParamsFromForm = (mode) => {
+  const { values } = getFormState();
+  const params = new URLSearchParams();
+  params.set('mode', mode);
+  params.set('expectedPrice', `${values.expectedPrice}`);
+  if (values.brand) params.set('brand', values.brand);
+  if (values.model) params.set('model', values.model);
+  if (values.year) params.set('year', values.year);
+  if (values.itemTypeId) params.set('itemTypeId', values.itemTypeId);
+  if (values.side) params.set('side', values.side);
+  if (values.position) params.set('position', values.position);
+  if (values.detail) params.set('q', values.detail);
+  return params;
+};
+
+const runSearch = (mode) => {
+  const { isValid } = getFormState();
+  if (!isValid) {
+    showToast('Completa los campos requeridos.');
+    openOverlay(refineOverlay);
+    return;
+  }
+  const params = buildSearchParamsFromForm(mode);
+  window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+  closeOverlay(refineOverlay);
+  updateQuerySummary(params);
+  const paramsWithLocation = withPreferredLocation(params);
+  persistLastSearchLocation(paramsWithLocation);
+  lastAutoCreated = false;
+  engine.run({ params: paramsWithLocation, cursor: null });
+};
+
 const applyRefine = () => {
   const mode = getMode();
   if (mode === MODE_SELL) {
     publishListing();
     return;
   }
-  const params = new URLSearchParams();
-  const brand = sanitizeValue(document.getElementById('brand').value);
-  const model = sanitizeValue(document.getElementById('model').value);
-  const year = sanitizeValue(document.getElementById('year').value);
-  const itemTypeId = sanitizeValue(document.getElementById('itemTypeId').value);
-  const side = sanitizeValue(document.getElementById('side').value);
-  const position = sanitizeValue(document.getElementById('position').value);
-  const detail = sanitizeValue(document.getElementById('buyDetail').value);
-
-  if (brand) params.set('brand', brand);
-  if (brand && model) params.set('model', model);
-  if (year) params.set('year', year);
-  if (itemTypeId) params.set('itemTypeId', itemTypeId);
-  if (side) params.set('side', side);
-  if (position) params.set('position', position);
-  if (detail) params.set('q', detail);
-
-  window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
-  closeOverlay(refineOverlay);
-  updateQuerySummary(params);
-  const paramsWithLocation = withPreferredLocation(params);
-  persistLastSearchLocation(paramsWithLocation);
-  engine.run({ params: paramsWithLocation, cursor: null });
+  runSearch(MODE_BUY);
 };
 
 const resetRefine = async () => {
   refineFields.forEach((field) => {
-    document.getElementById(field).value = '';
+    const el = document.getElementById(field);
+    if (el) el.value = '';
   });
-  const sellPrice = document.getElementById('sellPrice');
-  const sellHidePrice = document.getElementById('sellHidePrice');
-  const sellItemDetail = document.getElementById('sellItemDetail');
-  const buyDetail = document.getElementById('buyDetail');
-  if (sellPrice) sellPrice.value = '';
-  if (sellHidePrice) sellHidePrice.checked = false;
-  if (sellItemDetail) sellItemDetail.value = '';
-  if (buyDetail) buyDetail.value = '';
   window.history.replaceState({}, '', window.location.pathname);
   closeOverlay(refineOverlay);
   const params = new URLSearchParams();
   updateQuerySummary(params);
   await loadItemTypes(null);
   await loadModels(null);
-  const paramsWithLocation = withPreferredLocation(params);
-  persistLastSearchLocation(paramsWithLocation);
-  engine.run({ params: paramsWithLocation, cursor: null });
 };
 
 const hydrateRefineForm = async () => {
@@ -861,7 +857,8 @@ const hydrateRefineForm = async () => {
   document.getElementById('year').value = params.get('year') || '';
   document.getElementById('side').value = params.get('side') || '';
   document.getElementById('position').value = params.get('position') || '';
-  document.getElementById('buyDetail').value = params.get('q') || '';
+  document.getElementById('itemDetail').value = params.get('q') || '';
+  document.getElementById('priceInput').value = params.get('expectedPrice') || '';
 
   await loadItemTypes(null);
   document.getElementById('itemTypeId').value = itemTypeId;
@@ -870,17 +867,28 @@ const hydrateRefineForm = async () => {
   document.getElementById('model').value = modelId;
 };
 
-document.getElementById('openRefine').addEventListener('click', () => {
+openRefineBtn.addEventListener('click', () => {
   hydrateRefineForm();
   openOverlay(refineOverlay);
+});
+
+sellPublishBtn.addEventListener('click', () => {
+  hydrateRefineForm();
+  openOverlay(refineOverlay);
+});
+
+sellSearchBtn.addEventListener('click', () => {
+  sellHasSearched = true;
+  runSearch(MODE_SELL);
 });
 
 document.getElementById('closeRefine').addEventListener('click', () => closeOverlay(refineOverlay));
 document.getElementById('applyRefine').addEventListener('click', applyRefine);
 document.getElementById('resetRefine').addEventListener('click', resetRefine);
-document.getElementById('modeToggle').addEventListener('click', () => {
+modeToggleBtn.addEventListener('click', () => {
   const next = getMode() === MODE_BUY ? MODE_SELL : MODE_BUY;
   setMode(next);
+  clearStateRoot();
 });
 document.getElementById('brand').addEventListener('change', async (event) => {
   const brandId = event.target.value || '';
@@ -888,25 +896,29 @@ document.getElementById('brand').addEventListener('change', async (event) => {
   document.getElementById('model').value = '';
   enforceBrandModelDependency();
 });
-['brand', 'model', 'year', 'itemTypeId', 'sellItemDetail', 'sellPrice'].forEach((id) => {
+['brand', 'model', 'year', 'itemTypeId', 'itemDetail', 'priceInput'].forEach((id) => {
   const el = document.getElementById(id);
   if (el) {
-    el.addEventListener('input', updateSellValidity);
-    el.addEventListener('change', updateSellValidity);
+    el.addEventListener('input', updateRequiredValidity);
+    el.addEventListener('change', updateRequiredValidity);
   }
 });
 
 window.addEventListener('DOMContentLoaded', async () => {
   setMode(getMode());
-  const params = currentParams();
   try {
     await loadStaticOptions();
   } catch (_error) {
     // keep defaults if catalog fetch fails
   }
   await hydrateRefineForm();
-  updateQuerySummary(params);
-  const paramsWithLocation = withPreferredLocation(params);
-  persistLastSearchLocation(paramsWithLocation);
-  engine.run({ params: paramsWithLocation, cursor: null });
+  updateQuerySummary(currentParams());
+
+  const mode = getMode();
+  const params = currentParams();
+  if (mode === MODE_BUY && params.get('expectedPrice')) {
+    const paramsWithLocation = withPreferredLocation(params);
+    persistLastSearchLocation(paramsWithLocation);
+    engine.run({ params: paramsWithLocation, cursor: null });
+  }
 });

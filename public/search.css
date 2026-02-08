@@ -87,6 +87,10 @@ a {
   width: 100%;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .list {
   display: grid;
   gap: var(--space-3);
@@ -220,9 +224,19 @@ a {
   color: #f87171;
 }
 
-body[data-mode='sell'] .required-when-sell::after {
+body .required-always::after {
   content: ' *';
   color: #f87171;
+}
+
+.notice {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--muted);
+  display: grid;
+  gap: var(--space-2);
 }
 
 input,
