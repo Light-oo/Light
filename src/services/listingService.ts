@@ -177,13 +177,6 @@ export const listingService = {
       }
     }
 
-    if (createdAccess) {
-      const bucketKey = await listingRepository.getHiddenBucketKeyByListingId(listingId);
-      if (bucketKey) {
-        await listingRepository.rotateHiddenBucketAfterReveal(bucketKey, listingId);
-      }
-    }
-
     return {
       whatsapp_e164: seller.whatsapp_e164,
       contact_name: seller.name
