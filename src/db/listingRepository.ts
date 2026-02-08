@@ -326,46 +326,5 @@ export const listingRepository = {
     if (error) throw error;
     return (data ?? null) as ContactAccess | null;
   },
-  async getHiddenQueueItems(bucketKey: string) {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase
-      .from('hidden_price_queue_items')
-      .select('bucket_key, listing_id, queue_rank, last_served_at')
-      .eq('bucket_key', bucketKey)
-      .order('queue_rank', { ascending: true });
-    if (error) throw error;
-    return (data ?? []) as Array<{
-      bucket_key: string;
-      listing_id: string;
-      queue_rank: number;
-      last_served_at: string | null;
-    }>;
-  },
-  async getHiddenBucketFront(bucketKey: string) {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase.rpc('hidden_bucket_front', { bucket_key: bucketKey });
-    if (error) throw error;
-    if (Array.isArray(data)) {
-      return data[0] ?? null;
-    }
-    return data ?? null;
-  },
-  async rotateHiddenBucketAfterReveal(bucketKey: string, listingId: string) {
-    const supabase = getSupabaseClient();
-    const { error } = await supabase.rpc('hidden_bucket_rotate_after_reveal', {
-      bucket_key: bucketKey,
-      served_listing_id: listingId
-    });
-    if (error) throw error;
-  },
-  async getHiddenBucketKeyByListingId(listingId: string) {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase
-      .from('hidden_price_queue_items')
-      .select('bucket_key')
-      .eq('listing_id', listingId)
-      .maybeSingle();
-    if (error) throw error;
-    return (data?.bucket_key ?? null) as string | null;
-  }
+  // hidden price queue helpers removed for pilot
 };

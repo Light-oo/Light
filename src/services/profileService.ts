@@ -1,22 +1,18 @@
-import { profileRepository } from '../db/profileRepository';
-import { UpdateProfileInput } from '../validation/profileSchemas';
-import { normalizeElSalvadorPhone } from '../utils/phone';
-import { UserRole } from '../domain/contracts';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../db/client';
 
-export const profileService = {
-  async getProfile(userId: string) {
-    return profileRepository.getProfileById(userId);
-  },
-  async upsertProfile(userId: string, payload: UpdateProfileInput) {
-    const role: UserRole = payload.role ?? 'buyer';
-    const whatsapp = payload.whatsapp ? normalizeElSalvadorPhone(payload.whatsapp) : null;
-    const contactUrl = payload.contactUrl ?? null;
-
-    return profileRepository.upsertProfile({
-      id: userId,
-      role,
-      whatsapp_e164: whatsapp,
-      contact_url: contactUrl
-    });
+export const resolveProfileIdByUserId = async (
+  userId: string,
+  supabase?: SupabaseClient
+): Promise<string> => {
+  const client = supabase ?? getSupabaseClient();
+  const { data, error } = await client
+    .from('profiles')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error || !data?.id) {
+    throw new Error('profile_not_found');
   }
+  return data.id as string;
 };

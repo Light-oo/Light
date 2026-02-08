@@ -33,11 +33,11 @@ export const updateDraft = async (req: Request, res: Response, next: NextFunctio
 
 export const publishListing = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { response } = await requireUser(req, res);
+    const { user, response } = await requireUser(req, res);
     if (response) {
       return;
     }
-    const result = await listingService.publish(req.params.id);
+    const result = await listingService.publish(req.params.id, user.id);
     res.json({ ok: true, data: result });
   } catch (error) {
     next(error);

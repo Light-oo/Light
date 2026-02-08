@@ -4,6 +4,7 @@ import { badRequest, notFound } from '../utils/errors';
 import { normalizeElSalvadorPhone } from '../utils/phone';
 import { UpdateDraftInput } from '../validation/schemas';
 import { validatePublish } from './publishValidator';
+import { resolveProfileIdByUserId } from './profileService';
 
 const buildBundle = async (listingId: string): Promise<ListingBundle> => {
   const listing = await listingRepository.getListingById(listingId);
@@ -99,7 +100,7 @@ export const listingService = {
     return updated;
   },
 
-  async publish(listingId: string) {
+  async publish(listingId: string, userId?: string | null) {
     const bundle = await buildBundle(listingId);
     if (!bundle.listing) {
       throw notFound('Listing not found');
@@ -124,11 +125,17 @@ export const listingService = {
 
     const qualityScore = computeQualityScore(bundle);
 
+    let sellerProfileId: string | null = null;
+    if (userId) {
+      sellerProfileId = await resolveProfileIdByUserId(userId);
+    }
+
     const updated = await listingRepository.updateListing(listingId, {
       status: 'active',
       published_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       listing_type: 'sell' as any,
+      seller_profile_id: sellerProfileId,
       what_fingerprint: fingerprint,
       quality_score: qualityScore
     });

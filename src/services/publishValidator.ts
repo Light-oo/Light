@@ -54,7 +54,10 @@ export const validatePublish = (bundle: ListingBundle) => {
     if (!pricing.price_type) {
       issues.push({ field: 'howMuch.priceType', message: 'Price type is required' });
     }
-    if (pricing.price_type && pricing.price_type !== 'unknown' && !pricing.price_amount) {
+    if (pricing.price_type && !['fixed', 'negotiable'].includes(pricing.price_type)) {
+      issues.push({ field: 'howMuch.priceType', message: 'Price type must be fixed or negotiable' });
+    }
+    if (!pricing.price_amount) {
       issues.push({ field: 'howMuch.priceAmount', message: 'Price amount is required' });
     }
   }

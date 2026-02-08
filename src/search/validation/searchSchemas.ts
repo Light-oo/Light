@@ -26,8 +26,9 @@ const toOptionalBoolean = () =>
     return undefined;
   }, z.boolean().optional());
 
-export const searchQuerySchema = z.object({
-  mode: z.enum(['BUY', 'SELL', 'buy', 'sell']).optional(),
+export const searchQuerySchema = z
+  .object({
+  mode: z.enum(['BUY', 'SELL', 'buy', 'sell']),
   marketId: toOptionalString(),
   itemTypeId: toOptionalString(),
   brand: toOptionalString(),
@@ -48,6 +49,16 @@ export const searchQuerySchema = z.object({
   pageSize: toOptionalNumber(z.number().int().min(1).max(50)).default(20),
   cursor: toOptionalString(),
   q: toOptionalString()
-});
+})
+  .superRefine((value, ctx) => {
+    const mode = value.mode.toString().toUpperCase();
+    if (mode === 'BUY' && value.expectedPrice === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'expectedPrice is required for BUY',
+        path: ['expectedPrice']
+      });
+    }
+  });
 
 export type SearchQueryParams = z.infer<typeof searchQuerySchema>;

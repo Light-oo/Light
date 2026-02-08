@@ -3,6 +3,7 @@ import { getSupabaseClient } from '../../db/client';
 import { badRequest } from '../../utils/errors';
 import { type SearchFilterParams } from '../repositories/searchRepository';
 import { SearchQueryParams } from '../validation/searchSchemas';
+import { resolveProfileIdByUserId } from '../../services/profileService';
 
 type ListingCard = {
   cardType: 'sell' | 'buy';
@@ -116,35 +117,40 @@ const resolveOptionFilters = async (
   return { invalid: false, resolved, resolvedLabels };
 };
 
-const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard | null => {
+const requireField = <T>(value: T | null | undefined, field: string): T => {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+    throw new Error(`missing_field:${field}`);
+  }
+  return value;
+};
+
+const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard => {
   const price =
     cardType === 'sell'
-      ? row.price_amount ?? row.price ?? null
-      : row.expected_price_amount ?? row.price_amount ?? null;
-  const priceType =
-    row.price_type ?? row.expected_price_type ?? (row.negotiable ? 'negotiable' : 'fixed');
-
-  if (price == null) {
-    return null;
+      ? requireField<number>(row.price_amount, 'price_amount')
+      : requireField<number>(row.expected_price_amount, 'expected_price_amount');
+  const priceType = requireField<string>(row.price_type, 'price_type');
+  if (priceType !== 'fixed' && priceType !== 'negotiable') {
+    throw new Error(`invalid_price_type:${priceType}`);
   }
 
   return {
     cardType,
     what: {
-      brand: row.brand ?? null,
-      model: row.model ?? null,
-      year: row.year ?? row.year_from ?? null,
-      itemType: row.item_type_label_es ?? row.item_type_key ?? row.item_type ?? null,
-      partText: row.part_text ?? row.part ?? row.detail ?? row.notes ?? null
+      brand: requireField<string>(row.brand, 'brand'),
+      model: requireField<string>(row.model, 'model'),
+      year: requireField<number>(row.year, 'year'),
+      itemType: requireField<string>(row.item_type, 'item_type'),
+      partText: requireField<string>(row.part_text, 'part_text')
     },
     price,
     price_type: priceType === 'negotiable' ? 'negotiable' : 'fixed',
     location: {
-      department: row.department ?? null,
-      municipality: row.municipality ?? null
+      department: requireField<string>(row.department, 'department'),
+      municipality: requireField<string>(row.municipality, 'municipality')
     },
     audit: {
-      created_at: row.created_at ?? row.published_at ?? row.updated_at ?? null
+      created_at: requireField<string>(row.created_at, 'created_at')
     }
   };
 };
@@ -155,64 +161,42 @@ export const searchService = {
     const { invalid, resolved } = await resolveOptionFilters(query);
     const mode = (query.mode ?? 'BUY').toString().toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
     const supabase = getSupabaseClient();
-    const sellView = 'market_cards_view';
-    const buyView = 'market_mode_cards_view';
+    const viewName = mode === 'BUY' ? 'market_cards_view' : 'market_mode_cards_view';
+    const cardType: 'sell' | 'buy' = mode === 'BUY' ? 'sell' : 'buy';
+    const listingType = mode === 'BUY' ? 'sell' : 'buy';
+    const statusValue = mode === 'BUY' ? 'active' : 'open';
 
     if (invalid) {
       return { page: query.page, pageSize: query.pageSize, total: 0, nextCursor: null, results: [] };
     }
 
-    const applyFilters = (builder: any) => {
-      if (resolved.itemTypeId) builder = builder.eq('item_type_id', resolved.itemTypeId);
-      if (resolved.brand) builder = builder.ilike('brand', resolved.brand.toLowerCase());
-      if (resolved.model) builder = builder.ilike('model', resolved.model.toLowerCase());
-      if (resolved.year) builder = builder.eq('year', resolved.year);
-      if (resolved.side) builder = builder.eq('side', resolved.side);
-      if (resolved.position) builder = builder.eq('position', resolved.position);
-      if (resolved.q) {
-        const q = `%${resolved.q.toLowerCase()}%`;
-        builder = builder.or([`part_text.ilike.${q}`, `detail.ilike.${q}`, `notes.ilike.${q}`].join(','));
-      }
-      return builder;
-    };
+    let builder: any = supabase.from(viewName).select('*', { count: 'exact' });
+    builder = builder.eq('listing_type', listingType).eq('status', statusValue);
+    if (resolved.itemTypeId) builder = builder.eq('item_type_id', resolved.itemTypeId);
+    if (resolved.brand) builder = builder.eq('brand', resolved.brand);
+    if (resolved.model) builder = builder.eq('model', resolved.model);
+    if (resolved.year) builder = builder.eq('year', resolved.year);
+    if (resolved.q) builder = builder.ilike('part_text', `%${resolved.q}%`);
 
     const start = (query.page - 1) * query.pageSize;
     const end = start + query.pageSize - 1;
+    builder = builder.range(start, end);
 
-    let sellBuilder: any = supabase.from(sellView).select('*', { count: 'exact' });
-    sellBuilder = sellBuilder.eq('listing_type', 'sell').eq('status', 'active');
-    sellBuilder = applyFilters(sellBuilder);
-    if (mode === 'SELL') {
-      const min = resolved.priceMin ?? undefined;
-      const max = resolved.priceMax ?? undefined;
-      if (min !== undefined) sellBuilder = sellBuilder.gte('price_amount', min);
-      if (max !== undefined) sellBuilder = sellBuilder.lte('price_amount', max);
-    }
-    sellBuilder = sellBuilder.range(start, end);
+    const { data, error, count } = await builder;
+    if (error) throw error;
 
-    let buyBuilder: any = supabase.from(buyView).select('*', { count: 'exact' });
-    buyBuilder = buyBuilder.eq('listing_type', 'buy').eq('status', 'open');
-    buyBuilder = applyFilters(buyBuilder);
-    buyBuilder = buyBuilder.range(start, end);
+    const rows = (data ?? []) as any[];
+    const cards = rows.map((row) => mapMarketRowToCard(row, cardType));
 
-    const [{ data: sellData, error: sellError, count: sellCount }, { data: buyData, error: buyError, count: buyCount }] =
-      await Promise.all([sellBuilder, buyBuilder]);
-    if (sellError) throw sellError;
-    if (buyError) throw buyError;
-
-    const sellCards = (sellData ?? [])
-      .map((row: any) => mapMarketRowToCard(row, 'sell'))
-      .filter(Boolean) as ListingCard[];
-    const buyCards = (buyData ?? [])
-      .map((row: any) => mapMarketRowToCard(row, 'buy'))
-      .filter(Boolean) as ListingCard[];
-
-    const cards = [...sellCards, ...buyCards];
-
-    if (mode === 'BUY' && sellCards.length === 0) {
+    if (mode === 'BUY' && cards.length === 0) {
       const expectedPrice = query.expectedPrice;
       if (expectedPrice == null) {
         throw badRequest('expected_price_required');
+      }
+
+      let profileId: string | null = null;
+      if (context?.userId) {
+        profileId = await resolveProfileIdByUserId(context.userId);
       }
 
       const payload: Record<string, any> = {
@@ -223,22 +207,29 @@ export const searchService = {
         year: resolved.year ?? null,
         item_type_id: resolved.itemTypeId ?? null,
         part_text: resolved.q ?? null,
-        expected_price_amount: expectedPrice
+        expected_price_amount: expectedPrice,
+        buyer_profile_id: profileId
       };
-      if (context?.userId) {
-        payload.buyer_profile_id = context.userId;
-      }
-
       const { error: insertError } = await supabase.from('demands').insert(payload);
       if (insertError) throw insertError;
+
+      return {
+        page: query.page,
+        pageSize: query.pageSize,
+        total: 0,
+        nextCursor: null,
+        results: [],
+        autoCreated: true
+      };
     }
 
     return {
       page: query.page,
       pageSize: query.pageSize,
-      total: (sellCount ?? 0) + (buyCount ?? 0),
+      total: count ?? undefined,
       nextCursor: null,
-      results: cards
+      results: cards,
+      autoCreated: false
     };
   }
 };
