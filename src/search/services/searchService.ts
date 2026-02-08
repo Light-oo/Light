@@ -1,5 +1,6 @@
 import { getSupabaseClient } from '../../db/client';
 import { listingRepository } from '../../db/listingRepository';
+import { badRequest } from '../../utils/errors';
 import { searchRepository, type SearchFilterParams, type SearchResultRow } from '../repositories/searchRepository';
 import { SearchQueryParams } from '../validation/searchSchemas';
 
@@ -27,29 +28,53 @@ type ListingCard = {
   quality_score: number | null;
 };
 
-const buildBucketKey = (query: SearchQueryParams) => {
-  const pairs: Array<[string, string]> = [];
-  const add = (key: string, value: unknown) => {
-    if (value === undefined || value === null) return;
-    const str = String(value).trim();
-    if (!str) return;
-    pairs.push([key, str]);
-  };
+const buildBucketKey = (params: {
+  marketId?: string | null;
+  itemTypeId?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  yearFrom?: number | null;
+  yearTo?: number | null;
+  side?: string | null;
+  position?: string | null;
+}) => {
+  const required = [
+    params.marketId,
+    params.itemTypeId,
+    params.brand,
+    params.model,
+    params.yearFrom,
+    params.yearTo,
+    params.side,
+    params.position
+  ];
+  if (required.some((value) => value === undefined || value === null || String(value).trim() === '')) {
+    return null;
+  }
 
-  add('marketId', query.marketId);
-  add('itemTypeId', query.itemTypeId);
-  add('brand', query.brand);
-  add('model', query.model);
-  add('year', query.year);
-  add('side', query.side);
-  add('position', query.position);
-  add('department', query.department);
-  add('municipality', query.municipality);
-  add('q', query.q);
-
-  pairs.sort((a, b) => a[0].localeCompare(b[0]));
-  return pairs.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('|');
+  return [
+    params.marketId,
+    params.itemTypeId,
+    params.brand,
+    params.model,
+    params.yearFrom,
+    params.yearTo,
+    params.side,
+    params.position
+  ].join('|');
 };
+
+const buildBucketKeyFromRow = (row: SearchResultRow) =>
+  buildBucketKey({
+    marketId: row.market_id,
+    itemTypeId: row.item_type_id,
+    brand: row.brand,
+    model: row.model,
+    yearFrom: row.year_from,
+    yearTo: row.year_to,
+    side: row.side,
+    position: row.position
+  });
 
 const hashString = (value: string) => {
   let hash = 5381;
@@ -58,6 +83,8 @@ const hashString = (value: string) => {
   }
   return (hash >>> 0).toString(16);
 };
+
+const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 const resolveOptionFilters = async (
   query: SearchQueryParams
@@ -72,40 +99,83 @@ const resolveOptionFilters = async (
   };
 
   if (query.brand) {
-    const brand = await listingRepository.getBrandById(query.brand);
-    if (!brand) return { invalid: true, resolved, resolvedLabels };
-    resolved.brand = brand.label_es;
-    resolvedLabels.brand = brand.label_es;
+    if (isUuid(query.brand)) {
+      const brand = await listingRepository.getBrandById(query.brand);
+      if (!brand) {
+        throw badRequest('invalid_query_param:brand', { param: 'brand' });
+      }
+      resolved.brand = brand.label_es;
+      resolvedLabels.brand = brand.label_es;
+    } else {
+      resolved.brand = query.brand;
+      resolvedLabels.brand = query.brand;
+    }
   }
 
   if (query.model) {
-    const model = await listingRepository.getModelById(query.model);
-    if (!model) return { invalid: true, resolved, resolvedLabels };
-    resolved.model = model.label_es;
-    resolvedLabels.model = model.label_es;
+    if (isUuid(query.model)) {
+      const model = await listingRepository.getModelById(query.model);
+      if (!model) {
+        throw badRequest('invalid_query_param:model', { param: 'model' });
+      }
+      resolved.model = model.label_es;
+      resolvedLabels.model = model.label_es;
+    } else {
+      resolved.model = query.model;
+      resolvedLabels.model = query.model;
+    }
   }
 
   if (query.side) {
-    const side = await listingRepository.getSideById(query.side);
-    if (!side) return { invalid: true, resolved, resolvedLabels };
-    resolved.side = side.id;
-    resolvedLabels.side = side.label_es;
+    if (isUuid(query.side)) {
+      const side = await listingRepository.getSideById(query.side);
+      if (!side) {
+        throw badRequest('invalid_query_param:side', { param: 'side' });
+      }
+      const normalized = (side as { key?: string | null }).key || side.label_es.toLowerCase();
+      resolved.side = normalized;
+      resolvedLabels.side = side.label_es;
+    } else {
+      resolved.side = query.side.toLowerCase();
+      resolvedLabels.side = query.side;
+    }
   }
 
   if (query.position) {
-    const position = await listingRepository.getPositionById(query.position);
-    if (!position) return { invalid: true, resolved, resolvedLabels };
-    resolved.position = position.id;
-    resolvedLabels.position = position.label_es;
+    if (isUuid(query.position)) {
+      const position = await listingRepository.getPositionById(query.position);
+      if (!position) {
+        throw badRequest('invalid_query_param:position', { param: 'position' });
+      }
+      const normalized = (position as { key?: string | null }).key || position.label_es.toLowerCase();
+      resolved.position = normalized;
+      resolvedLabels.position = position.label_es;
+    } else {
+      resolved.position = query.position.toLowerCase();
+      resolvedLabels.position = query.position;
+    }
   }
 
   if (query.year) {
-    const yearOption = await listingRepository.getYearOptionById(query.year);
-    if (!yearOption) return { invalid: true, resolved, resolvedLabels };
-    const parsed = Number(yearOption.label_es);
-    if (!Number.isFinite(parsed)) return { invalid: true, resolved, resolvedLabels };
-    resolved.year = parsed;
-    resolvedLabels.year = parsed;
+    if (isUuid(query.year)) {
+      const yearOption = await listingRepository.getYearOptionById(query.year);
+      if (!yearOption) {
+        throw badRequest('invalid_query_param:year', { param: 'year' });
+      }
+      const parsed = Number(yearOption.label_es);
+      if (!Number.isFinite(parsed)) {
+        throw badRequest('invalid_query_param:year', { param: 'year' });
+      }
+      resolved.year = parsed;
+      resolvedLabels.year = parsed;
+    } else {
+      const parsed = Number(query.year);
+      if (!Number.isFinite(parsed)) {
+        throw badRequest('invalid_query_param:year', { param: 'year' });
+      }
+      resolved.year = parsed;
+      resolvedLabels.year = parsed;
+    }
   }
 
   return { invalid: false, resolved, resolvedLabels };
@@ -187,9 +257,19 @@ const fetchDemandTimestamp = async (query: SearchQueryParams) => {
 };
 
 const buildActionableCard = async (query: SearchQueryParams, labels: Record<string, string | number | null>) => {
-  const bucketKey = buildBucketKey(query);
+  const filterKey = JSON.stringify({
+    marketId: query.marketId ?? null,
+    itemTypeId: query.itemTypeId ?? null,
+    brand: labels.brand ?? query.brand ?? null,
+    model: labels.model ?? query.model ?? null,
+    year: labels.year ?? query.year ?? null,
+    side: labels.side ?? query.side ?? null,
+    position: labels.position ?? query.position ?? null,
+    department: query.department ?? null,
+    municipality: query.municipality ?? null
+  });
   const stamp = await fetchDemandTimestamp(query);
-  const listingId = `actionable:${hashString(bucketKey)}`;
+  const listingId = `actionable:${hashString(filterKey)}`;
   const itemType = query.itemTypeId ? await listingRepository.getItemType(query.itemTypeId) : null;
 
   return {
@@ -219,28 +299,65 @@ const buildActionableCard = async (query: SearchQueryParams, labels: Record<stri
 
 export const searchService = {
   async searchListings(query: SearchQueryParams) {
-    const bucketKey = buildBucketKey(query);
     const { invalid, resolved, resolvedLabels } = await resolveOptionFilters(query);
+    const yearFrom = query.yearFrom ?? (typeof resolvedLabels.year === 'number' ? resolvedLabels.year : null);
+    const yearTo = query.yearTo ?? (typeof resolvedLabels.year === 'number' ? resolvedLabels.year : null);
+    const bucketKey = buildBucketKey({
+      marketId: query.marketId ?? null,
+      itemTypeId: query.itemTypeId ?? null,
+      brand: resolvedLabels.brand ? String(resolvedLabels.brand) : null,
+      model: resolvedLabels.model ? String(resolvedLabels.model) : null,
+      yearFrom: typeof yearFrom === 'number' ? yearFrom : null,
+      yearTo: typeof yearTo === 'number' ? yearTo : null,
+      side: resolved.side ?? null,
+      position: resolved.position ?? null
+    });
 
     const result = invalid ? { rows: [], count: 0, nextCursor: null } : await searchRepository.searchListings(resolved);
-    const hiddenQueueItems = bucketKey ? await listingRepository.getHiddenQueueItems(bucketKey) : [];
-    const hiddenListingIds = new Set(hiddenQueueItems.map((item) => item.listing_id));
+    const bucketKeys = new Set<string>();
+    if (bucketKey) {
+      bucketKeys.add(bucketKey);
+    } else {
+      result.rows.forEach((row) => {
+        const derivedKey = buildBucketKeyFromRow(row);
+        if (derivedKey) bucketKeys.add(derivedKey);
+      });
+    }
+
+    const hiddenQueueByBucket = new Map<string, Array<{ listing_id: string }>>();
+    for (const key of bucketKeys) {
+      const items = await listingRepository.getHiddenQueueItems(key);
+      hiddenQueueByBucket.set(key, items);
+    }
+
+    const hiddenQueueBuckets = new Set<string>();
+    const hiddenListingIds = new Set<string>();
+    hiddenQueueByBucket.forEach((items, key) => {
+      if (items.length >= 2) {
+        hiddenQueueBuckets.add(key);
+        items.forEach((item) => hiddenListingIds.add(item.listing_id));
+      }
+    });
+
     const pricingRows = await listingRepository.getPricingByListingIds(result.rows.map((row) => row.listing_id));
     const hidePriceMap = new Map(pricingRows.map((row) => [row.listing_id, Boolean(row.hide_price)]));
 
-    const hasHiddenQueue = hiddenQueueItems.length >= 2;
-    const visibleRows = result.rows.filter((row) => !hasHiddenQueue || !hiddenListingIds.has(row.listing_id));
+    const visibleRows = result.rows.filter((row) => !hiddenListingIds.has(row.listing_id));
 
     const cards: ListingCard[] = [];
     const weakResults = visibleRows.length === 0;
 
-    if (weakResults) {
-      cards.push(await buildActionableCard(query, resolvedLabels));
+    const hiddenQueueBucketOrder: string[] = [];
+    if (bucketKey && hiddenQueueBuckets.has(bucketKey)) {
+      hiddenQueueBucketOrder.push(bucketKey);
     }
+    hiddenQueueBuckets.forEach((key) => {
+      if (!hiddenQueueBucketOrder.includes(key)) hiddenQueueBucketOrder.push(key);
+    });
 
-    if (hasHiddenQueue && bucketKey) {
+    for (const key of hiddenQueueBucketOrder) {
       try {
-        const front = await listingRepository.getHiddenBucketFront(bucketKey);
+        const front = await listingRepository.getHiddenBucketFront(key);
         const listingId = front?.listing_id ?? front?.listingId ?? null;
         if (listingId) {
           const row = await searchRepository.getListingById(listingId);
@@ -258,8 +375,12 @@ export const searchService = {
       }
     }
 
+    if (weakResults) {
+      cards.push(await buildActionableCard(query, resolvedLabels));
+    }
+
     const visibleCards = visibleRows.map((row) => {
-      const isHiddenSingle = hiddenListingIds.has(row.listing_id) && !hasHiddenQueue;
+      const isHiddenSingle = hiddenListingIds.has(row.listing_id) && hiddenQueueBuckets.size === 0;
       const shouldHide = isHiddenSingle || hidePriceMap.get(row.listing_id) === true;
       const overrides = shouldHide ? { how_much: null } : {};
       return mapRowToCard(row, {
