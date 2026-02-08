@@ -1,4 +1,4 @@
+﻿node_modules
+.dist
 .env
-dist/
-node_modules/
-cookies.txt
+
