@@ -151,8 +151,12 @@ const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard => 
     throw new Error('missing_field:year');
   }
 
-  const itemTypeRaw = row.item_type ?? row.item_type_label_es ?? row.item_type_key;
-  const partTextRaw = row.part_text ?? row.detail ?? row.notes ?? row.part;
+  const itemTypeRaw =
+    row.item_type ??
+    row.item_type_label_es ??
+    row.item_type_key ??
+    row.item_type_id;
+  const partTextRaw = row.part_text ?? row.detail ?? row.notes ?? row.part ?? '';
 
   return {
     cardType,
@@ -161,7 +165,7 @@ const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard => 
       model: requireField<string>(row.model, 'model'),
       year: Number(year),
       itemType: requireField<string>(itemTypeRaw, 'item_type'),
-      partText: requireField<string>(partTextRaw, 'part_text')
+      partText: requireDefined<string>(partTextRaw, 'part_text')
     },
     price,
     price_type: priceType === 'negotiable' ? 'negotiable' : 'fixed',
@@ -192,17 +196,22 @@ export const searchService = {
 
     let builder: any = supabase.from(viewName).select('*', { count: 'exact' });
     if (mode === 'BUY') {
-      builder = builder.eq('listing_type', listingType);
+      builder = builder.eq('listing_type', listingType).eq('status', statusValue);
     }
-    builder = builder.eq('status', statusValue);
-    if (resolved.itemTypeId) builder = builder.eq('item_type_id', resolved.itemTypeId);
+    let sellItemTypeValue: string | null = null;
+    if (resolved.itemTypeId) {
+      if (mode === 'BUY') {
+        builder = builder.eq('item_type_id', resolved.itemTypeId);
+      } else {
+        const itemType = await listingRepository.getItemType(resolved.itemTypeId);
+        sellItemTypeValue = itemType?.label_es ?? itemType?.key ?? resolved.itemTypeId;
+      }
+    }
     if (resolved.brand) builder = builder.eq('brand', resolved.brand);
     if (resolved.model) builder = builder.eq('model', resolved.model);
     if (resolved.year) {
       if (mode === 'BUY') {
         builder = builder.lte('year_from', resolved.year).gte('year_to', resolved.year);
-      } else {
-        builder = builder.eq('year', resolved.year);
       }
     }
     if (resolved.q) builder = builder.ilike('part_text', `%${resolved.q}%`);
@@ -214,8 +223,37 @@ export const searchService = {
     const { data, error, count } = await builder;
     if (error) throw error;
 
-    const rows = (data ?? []) as any[];
-    const cards = rows.map((row) => mapMarketRowToCard(row, cardType));
+    let rows = (data ?? []) as any[];
+    if (mode === 'SELL') {
+      if (sellItemTypeValue) {
+        rows = rows.filter((row) => {
+          const rowItemType =
+            row.item_type ?? row.item_type_label_es ?? row.item_type_key ?? row.item_type_id ?? null;
+          return rowItemType === sellItemTypeValue;
+        });
+      }
+      if (resolved.year) {
+        rows = rows.filter((row) => {
+          const rowYear = row.year ?? row.year_from ?? row.year_to ?? null;
+          if (row.year_from != null && row.year_to != null) {
+            return resolved.year >= row.year_from && resolved.year <= row.year_to;
+          }
+          return rowYear === resolved.year;
+        });
+      }
+    }
+    const cards: ListingCard[] = [];
+    rows.forEach((row) => {
+      try {
+        cards.push(mapMarketRowToCard(row, cardType));
+      } catch (error: any) {
+        console.error('card_map_error', {
+          message: error?.message,
+          cardType,
+          rowKeys: row && typeof row === 'object' ? Object.keys(row) : []
+        });
+      }
+    });
 
     if (mode === 'BUY' && cards.length === 0) {
       const expectedPrice = query.expectedPrice;
