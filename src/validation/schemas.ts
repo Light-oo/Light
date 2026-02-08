@@ -21,8 +21,7 @@ export const updateDraftSchema = z.object({
     .object({
       priceType: z.string().min(1).optional(),
       priceAmount: z.number().positive().optional(),
-      currency: z.string().min(1).optional(),
-      hidePrice: z.boolean().optional()
+      currency: z.string().min(1).optional()
     })
     .optional(),
   location: z

@@ -127,7 +127,7 @@ export const listingRepository = {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('pricing')
-      .select('listing_id, price_type, price_amount, currency, hide_price')
+      .select('listing_id, price_type, price_amount, currency')
       .in('listing_id', listingIds);
     if (error) throw error;
     return (data ?? []) as Pricing[];

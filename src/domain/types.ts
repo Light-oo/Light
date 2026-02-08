@@ -8,6 +8,8 @@ export interface Listing {
   updated_at: string;
   published_at: string | null;
   market_id: string | null;
+  listing_type?: 'sell' | 'buy' | null;
+  seller_profile_id?: string | null;
   seller_id: string | null;
   quality_score: number | null;
   what_fingerprint: string | null;
@@ -29,7 +31,6 @@ export interface Pricing {
   price_type: string | null;
   price_amount: number | null;
   currency: string | null;
-  hide_price?: boolean | null;
 }
 
 export interface ListingLocation {

@@ -1,31 +1,22 @@
 import { listingRepository } from '../../db/listingRepository';
+import { getSupabaseClient } from '../../db/client';
 import { badRequest } from '../../utils/errors';
-import { searchRepository, type SearchFilterParams, type SearchResultRow } from '../repositories/searchRepository';
+import { type SearchFilterParams } from '../repositories/searchRepository';
 import { SearchQueryParams } from '../validation/searchSchemas';
 
 type ListingCard = {
-  listingId: string;
-  cardType: 'listing';
-  marketId: string | null;
-  itemType: { id: string; key?: string; label_es?: string } | null;
+  cardType: 'sell' | 'buy';
   what: {
-    brand?: string | null;
-    model?: string | null;
-    year_from?: number | null;
-    year_to?: number | null;
-    side?: string | null;
-    position?: string | null;
-    detail?: string | null;
+    brand: string | null;
+    model: string | null;
+    year: number | null;
+    itemType: string | null;
+    partText: string | null;
   };
-  how_much?: {
-    price_type: string | null;
-    price_amount: number | null;
-    currency: string | null;
-    hide_price?: boolean | null;
-  } | null;
-  location?: { department: string | null; municipality: string | null } | null;
-  audit: { published_at: string | null; updated_at?: string | null };
-  quality_score: number | null;
+  price: number;
+  price_type: 'fixed' | 'negotiable';
+  location: { department: string | null; municipality: string | null };
+  audit: { created_at: string | null };
 };
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -125,68 +116,128 @@ const resolveOptionFilters = async (
   return { invalid: false, resolved, resolvedLabels };
 };
 
-const mapRowToCard = (row: SearchResultRow, overrides?: Partial<ListingCard>): ListingCard => ({
-  listingId: row.listing_id,
-  cardType: 'listing',
-  marketId: row.market_id,
-  itemType: {
-    id: row.item_type_id,
-    key: row.item_type_key,
-    label_es: row.item_type_label_es
-  },
-  what: {
-    brand: row.brand,
-    model: row.model,
-    year_from: row.year_from,
-    year_to: row.year_to,
-    side: row.side,
-    position: row.position
-  },
-  how_much: {
-    price_type: row.price_type,
-    price_amount: row.price_amount,
-    currency: row.currency
-  },
-  location: {
-    department: row.department,
-    municipality: row.municipality
-  },
-  audit: {
-    published_at: row.published_at,
-    updated_at: row.updated_at
-  },
-  quality_score: row.quality_score,
-  ...overrides
-});
+const mapMarketRowToCard = (row: any, cardType: 'sell' | 'buy'): ListingCard | null => {
+  const price =
+    cardType === 'sell'
+      ? row.price_amount ?? row.price ?? null
+      : row.expected_price_amount ?? row.price_amount ?? null;
+  const priceType =
+    row.price_type ?? row.expected_price_type ?? (row.negotiable ? 'negotiable' : 'fixed');
+
+  if (price == null) {
+    return null;
+  }
+
+  return {
+    cardType,
+    what: {
+      brand: row.brand ?? null,
+      model: row.model ?? null,
+      year: row.year ?? row.year_from ?? null,
+      itemType: row.item_type_label_es ?? row.item_type_key ?? row.item_type ?? null,
+      partText: row.part_text ?? row.part ?? row.detail ?? row.notes ?? null
+    },
+    price,
+    price_type: priceType === 'negotiable' ? 'negotiable' : 'fixed',
+    location: {
+      department: row.department ?? null,
+      municipality: row.municipality ?? null
+    },
+    audit: {
+      created_at: row.created_at ?? row.published_at ?? row.updated_at ?? null
+    }
+  };
+};
 
 
 export const searchService = {
-  async searchListings(query: SearchQueryParams) {
+  async searchListings(query: SearchQueryParams, context?: { userId?: string | null }) {
     const { invalid, resolved } = await resolveOptionFilters(query);
-    const result = invalid ? { rows: [], count: 0, nextCursor: null } : await searchRepository.searchListings(resolved);
-    const pricingRows = await listingRepository.getPricingByListingIds(result.rows.map((row) => row.listing_id));
-    const hidePriceMap = new Map(pricingRows.map((row) => [row.listing_id, row.hide_price ?? null]));
-    const cards: ListingCard[] = [];
+    const mode = (query.mode ?? 'BUY').toString().toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+    const supabase = getSupabaseClient();
+    const sellView = 'market_cards_view';
+    const buyView = 'market_mode_cards_view';
 
-    const visibleCards = result.rows.map((row) =>
-      mapRowToCard(row, {
-        cardType: 'listing',
-        how_much: {
-          price_type: row.price_type,
-          price_amount: row.price_amount,
-          currency: row.currency,
-          hide_price: hidePriceMap.get(row.listing_id) ?? null
-        }
-      })
-    );
+    if (invalid) {
+      return { page: query.page, pageSize: query.pageSize, total: 0, nextCursor: null, results: [] };
+    }
 
-    cards.push(...visibleCards);
+    const applyFilters = (builder: any) => {
+      if (resolved.itemTypeId) builder = builder.eq('item_type_id', resolved.itemTypeId);
+      if (resolved.brand) builder = builder.ilike('brand', resolved.brand.toLowerCase());
+      if (resolved.model) builder = builder.ilike('model', resolved.model.toLowerCase());
+      if (resolved.year) builder = builder.eq('year', resolved.year);
+      if (resolved.side) builder = builder.eq('side', resolved.side);
+      if (resolved.position) builder = builder.eq('position', resolved.position);
+      if (resolved.q) {
+        const q = `%${resolved.q.toLowerCase()}%`;
+        builder = builder.or([`part_text.ilike.${q}`, `detail.ilike.${q}`, `notes.ilike.${q}`].join(','));
+      }
+      return builder;
+    };
+
+    const start = (query.page - 1) * query.pageSize;
+    const end = start + query.pageSize - 1;
+
+    let sellBuilder: any = supabase.from(sellView).select('*', { count: 'exact' });
+    sellBuilder = sellBuilder.eq('listing_type', 'sell').eq('status', 'active');
+    sellBuilder = applyFilters(sellBuilder);
+    if (mode === 'SELL') {
+      const min = resolved.priceMin ?? undefined;
+      const max = resolved.priceMax ?? undefined;
+      if (min !== undefined) sellBuilder = sellBuilder.gte('price_amount', min);
+      if (max !== undefined) sellBuilder = sellBuilder.lte('price_amount', max);
+    }
+    sellBuilder = sellBuilder.range(start, end);
+
+    let buyBuilder: any = supabase.from(buyView).select('*', { count: 'exact' });
+    buyBuilder = buyBuilder.eq('listing_type', 'buy').eq('status', 'open');
+    buyBuilder = applyFilters(buyBuilder);
+    buyBuilder = buyBuilder.range(start, end);
+
+    const [{ data: sellData, error: sellError, count: sellCount }, { data: buyData, error: buyError, count: buyCount }] =
+      await Promise.all([sellBuilder, buyBuilder]);
+    if (sellError) throw sellError;
+    if (buyError) throw buyError;
+
+    const sellCards = (sellData ?? [])
+      .map((row: any) => mapMarketRowToCard(row, 'sell'))
+      .filter(Boolean) as ListingCard[];
+    const buyCards = (buyData ?? [])
+      .map((row: any) => mapMarketRowToCard(row, 'buy'))
+      .filter(Boolean) as ListingCard[];
+
+    const cards = [...sellCards, ...buyCards];
+
+    if (mode === 'BUY' && sellCards.length === 0) {
+      const expectedPrice = query.expectedPrice;
+      if (expectedPrice == null) {
+        throw badRequest('expected_price_required');
+      }
+
+      const payload: Record<string, any> = {
+        listing_type: 'buy',
+        status: 'open',
+        brand: resolved.brand ?? null,
+        model: resolved.model ?? null,
+        year: resolved.year ?? null,
+        item_type_id: resolved.itemTypeId ?? null,
+        part_text: resolved.q ?? null,
+        expected_price_amount: expectedPrice
+      };
+      if (context?.userId) {
+        payload.buyer_profile_id = context.userId;
+      }
+
+      const { error: insertError } = await supabase.from('demands').insert(payload);
+      if (insertError) throw insertError;
+    }
 
     return {
       page: query.page,
       pageSize: query.pageSize,
-      total: result.count ?? undefined,
-      nextCursor: result.nextCursor,
+      total: (sellCount ?? 0) + (buyCount ?? 0),
+      nextCursor: null,
       results: cards
     };
   }

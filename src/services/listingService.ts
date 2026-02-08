@@ -65,8 +65,7 @@ export const listingService = {
         listing_id: listingId,
         price_type: payload.howMuch.priceType ?? null,
         price_amount: payload.howMuch.priceAmount ?? null,
-        currency: payload.howMuch.currency ?? null,
-        hide_price: payload.howMuch.hidePrice ?? null
+        currency: payload.howMuch.currency ?? null
       });
     }
 
@@ -129,6 +128,7 @@ export const listingService = {
       status: 'active',
       published_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      listing_type: 'sell' as any,
       what_fingerprint: fingerprint,
       quality_score: qualityScore
     });

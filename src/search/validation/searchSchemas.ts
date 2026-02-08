@@ -27,6 +27,7 @@ const toOptionalBoolean = () =>
   }, z.boolean().optional());
 
 export const searchQuerySchema = z.object({
+  mode: z.enum(['BUY', 'SELL', 'buy', 'sell']).optional(),
   marketId: toOptionalString(),
   itemTypeId: toOptionalString(),
   brand: toOptionalString(),
@@ -41,6 +42,7 @@ export const searchQuerySchema = z.object({
   priceMin: toOptionalNumber(z.number().nonnegative()),
   priceMax: toOptionalNumber(z.number().nonnegative()),
   includeUnknownPrice: toOptionalBoolean().default(false),
+  expectedPrice: toOptionalNumber(z.number().nonnegative()),
   sort: z.enum(['newest', 'price_asc', 'price_desc', 'quality', 'relevance']).default('newest'),
   page: toOptionalNumber(z.number().int().min(1)).default(1),
   pageSize: toOptionalNumber(z.number().int().min(1).max(50)).default(20),
