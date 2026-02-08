@@ -28,8 +28,19 @@ export type SearchResultRow = {
 
 const VIEW_NAME = 'listing_search_view';
 
+export type SearchFilterParams = Omit<
+  SearchQueryParams,
+  'brand' | 'model' | 'side' | 'position' | 'year'
+> & {
+  brand?: string;
+  model?: string;
+  side?: string;
+  position?: string;
+  year?: number;
+};
+
 export const searchRepository = {
-  async searchListings(query: SearchQueryParams) {
+  async searchListings(query: SearchFilterParams) {
     const supabase = getSupabaseClient();
     const cursor = decodeCursor(query.cursor);
 
@@ -92,10 +103,20 @@ export const searchRepository = {
     const nextCursor = rows.length === query.pageSize ? buildNextCursor(rows, query) : null;
 
     return { rows, count: count ?? null, nextCursor };
+  },
+  async getListingById(listingId: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from(VIEW_NAME)
+      .select('*')
+      .eq('listing_id', listingId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as SearchResultRow | null;
   }
 };
 
-const applyPriceFilters = (builder: any, query: SearchQueryParams) => {
+const applyPriceFilters = (builder: any, query: SearchFilterParams) => {
   const hasPriceRange = query.priceMin !== undefined || query.priceMax !== undefined;
   if (!hasPriceRange) {
     if (!query.includeUnknownPrice) {
@@ -118,7 +139,7 @@ const applyPriceFilters = (builder: any, query: SearchQueryParams) => {
   return builder;
 };
 
-const applySorting = (builder: any, query: SearchQueryParams) => {
+const applySorting = (builder: any, query: SearchFilterParams) => {
   switch (query.sort) {
     case 'price_asc':
       builder = builder.order('price_unknown_last', { ascending: true });
@@ -151,7 +172,7 @@ const applySorting = (builder: any, query: SearchQueryParams) => {
   return builder;
 };
 
-const applyCursor = (builder: any, query: SearchQueryParams, cursor: any) => {
+const applyCursor = (builder: any, query: SearchFilterParams, cursor: any) => {
   if (query.sort === 'price_asc' || query.sort === 'price_desc') {
     const comparator = query.sort === 'price_asc' ? 'gt' : 'lt';
     const priceAmount = cursor.priceAmount ?? 0;
@@ -191,7 +212,7 @@ const applyCursor = (builder: any, query: SearchQueryParams, cursor: any) => {
   return builder.limit(query.pageSize);
 };
 
-const buildNextCursor = (rows: SearchResultRow[], query: SearchQueryParams) => {
+const buildNextCursor = (rows: SearchResultRow[], query: SearchFilterParams) => {
   const last = rows[rows.length - 1];
   if (!last) return null;
 

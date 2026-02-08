@@ -1,0 +1,78 @@
+﻿<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cuenta</title>
+    <link rel="stylesheet" href="/app/search.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div class="title">Cuenta</div>
+        <a class="btn" href="/app/search.html">Volver</a>
+      </header>
+
+      <section class="list">
+        <article class="card">
+          <div class="field">
+            <label class="label">Nombre de cuenta</label>
+            <div id="accountName">—</div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="field">
+            <label class="label">Email</label>
+            <div id="accountEmail">—</div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="field">
+            <label class="label">WhatsApp</label>
+            <div id="accountWhatsappValue">No configurado</div>
+            <div class="actions" style="margin-top: 8px">
+              <button class="btn btn-block" id="toggleWhatsappEdit">Configurar</button>
+            </div>
+          </div>
+          <div id="whatsappEditor" hidden>
+            <div class="field">
+              <label class="label" for="whatsappInput">Número de WhatsApp</label>
+              <input id="whatsappInput" type="text" placeholder="+503XXXXXXXX" />
+              <div class="helper">Formato +503XXXXXXXX</div>
+            </div>
+            <div class="actions">
+              <button class="btn btn-primary btn-block" id="saveWhatsappBtn">Guardar</button>
+              <button class="btn btn-block" id="cancelWhatsappBtn">Cancelar</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="field">
+            <label class="label" for="defaultDepartment">Ubicación por defecto</label>
+            <input id="defaultDepartment" type="text" placeholder="Departamento" />
+          </div>
+          <div class="field">
+            <input id="defaultMunicipality" type="text" placeholder="Municipio" />
+          </div>
+          <button class="btn btn-primary btn-block" id="saveLocationBtn">Guardar</button>
+        </article>
+
+        <article class="card">
+          <a href="/app/terms.html">Términos y Privacidad</a>
+        </article>
+
+        <article class="card">
+          <a href="mailto:soporte@example.com?subject=Reporte%20de%20problema">Reportar un problema</a>
+        </article>
+
+        <button class="btn btn-primary btn-block" id="logoutBtn">Cerrar sesión</button>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script type="module" src="/app/account.js"></script>
+  </body>
+</html>

@@ -27,5 +27,22 @@ export const catalogService = {
     return getCached(`itemTypeRules:${itemTypeId}`, () =>
       listingRepository.getItemTypeRules(itemTypeId)
     );
+  },
+  async getBrands(activeOnly: boolean) {
+    return getCached(`brands:${activeOnly}`, () => listingRepository.getBrands(activeOnly));
+  },
+  async getModels(brandId: string | null, activeOnly: boolean) {
+    return getCached(`models:${brandId ?? 'all'}:${activeOnly}`, () =>
+      listingRepository.getModels(brandId, activeOnly)
+    );
+  },
+  async getSides(activeOnly: boolean) {
+    return getCached(`sides:${activeOnly}`, () => listingRepository.getSides(activeOnly));
+  },
+  async getPositions(activeOnly: boolean) {
+    return getCached(`positions:${activeOnly}`, () => listingRepository.getPositions(activeOnly));
+  },
+  async getYearOptions(activeOnly: boolean) {
+    return getCached(`yearOptions:${activeOnly}`, () => listingRepository.getYearOptions(activeOnly));
   }
 };

@@ -69,6 +69,42 @@ export interface ItemTypeRule {
   allowed_positions: string[] | null;
 }
 
+export interface Brand {
+  id: string;
+  label_es: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface Model {
+  id: string;
+  brand_id: string;
+  label_es: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface Side {
+  id: string;
+  label_es: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface Position {
+  id: string;
+  label_es: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface YearOption {
+  id: string;
+  label_es: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
 export interface ContactAccess {
   id: string;
   listing_id: string;

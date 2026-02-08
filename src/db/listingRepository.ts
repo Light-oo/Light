@@ -8,7 +8,12 @@ import {
   ItemType,
   ItemTypeRule,
   Market,
-  ContactAccess
+  ContactAccess,
+  Brand,
+  Model,
+  Side,
+  Position,
+  YearOption
 } from '../domain/types';
 
 export const listingRepository = {
@@ -180,6 +185,102 @@ export const listingRepository = {
     if (error) throw error;
     return data as ItemTypeRule;
   },
+  async getBrands(activeOnly: boolean) {
+    const supabase = getSupabaseClient();
+    let query = supabase.from('brands').select('*').order('sort_order');
+    if (activeOnly) query = query.eq('is_active', true);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as Brand[];
+  },
+  async getModels(brandId: string | null, activeOnly: boolean) {
+    const supabase = getSupabaseClient();
+    let query = supabase.from('models').select('*').order('sort_order');
+    if (brandId) query = query.eq('brand_id', brandId);
+    if (activeOnly) query = query.eq('is_active', true);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as Model[];
+  },
+  async getSides(activeOnly: boolean) {
+    const supabase = getSupabaseClient();
+    let query = supabase.from('sides').select('*').order('sort_order');
+    if (activeOnly) query = query.eq('is_active', true);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as Side[];
+  },
+  async getPositions(activeOnly: boolean) {
+    const supabase = getSupabaseClient();
+    let query = supabase.from('positions').select('*').order('sort_order');
+    if (activeOnly) query = query.eq('is_active', true);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as Position[];
+  },
+  async getYearOptions(activeOnly: boolean) {
+    const supabase = getSupabaseClient();
+    let query = supabase.from('year_options').select('*').order('sort_order');
+    if (activeOnly) query = query.eq('is_active', true);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as YearOption[];
+  },
+  async getBrandById(id: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('brands')
+      .select('*')
+      .eq('id', id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as Brand | null;
+  },
+  async getModelById(id: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('models')
+      .select('*')
+      .eq('id', id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as Model | null;
+  },
+  async getSideById(id: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('sides')
+      .select('*')
+      .eq('id', id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as Side | null;
+  },
+  async getPositionById(id: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('positions')
+      .select('*')
+      .eq('id', id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as Position | null;
+  },
+  async getYearOptionById(id: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('year_options')
+      .select('*')
+      .eq('id', id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as YearOption | null;
+  },
   async createContactAccess(payload: {
     listing_id: string;
     requester_user_id: string;
@@ -203,5 +304,58 @@ export const listingRepository = {
       .single();
     if (error) throw error;
     return data as ContactAccess;
+  },
+  async getContactAccess(listingId: string, requesterUserId: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('contact_access')
+      .select('*')
+      .eq('listing_id', listingId)
+      .eq('requester_user_id', requesterUserId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data ?? null) as ContactAccess | null;
+  },
+  async getHiddenQueueItems(bucketKey: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('hidden_price_queue_items')
+      .select('bucket_key, listing_id, queue_rank, last_served_at')
+      .eq('bucket_key', bucketKey)
+      .order('queue_rank', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Array<{
+      bucket_key: string;
+      listing_id: string;
+      queue_rank: number;
+      last_served_at: string | null;
+    }>;
+  },
+  async getHiddenBucketFront(bucketKey: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.rpc('hidden_bucket_front', { bucket_key: bucketKey });
+    if (error) throw error;
+    if (Array.isArray(data)) {
+      return data[0] ?? null;
+    }
+    return data ?? null;
+  },
+  async rotateHiddenBucketAfterReveal(bucketKey: string, listingId: string) {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.rpc('hidden_bucket_rotate_after_reveal', {
+      bucket_key: bucketKey,
+      served_listing_id: listingId
+    });
+    if (error) throw error;
+  },
+  async getHiddenBucketKeyByListingId(listingId: string) {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('hidden_price_queue_items')
+      .select('bucket_key')
+      .eq('listing_id', listingId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data?.bucket_key ?? null) as string | null;
   }
 };

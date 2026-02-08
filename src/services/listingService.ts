@@ -153,14 +153,36 @@ export const listingService = {
       throw badRequest('Seller contact unavailable');
     }
 
-    await listingRepository.createContactAccess({
-      listing_id: listingId,
-      requester_user_id: payload.requesterUserId,
-      token_cost: payload.tokenCost,
-      paid_at: new Date().toISOString(),
-      revealed_at: new Date().toISOString(),
-      channel: 'whatsapp'
-    });
+    const existing = await listingRepository.getContactAccess(listingId, payload.requesterUserId);
+    let createdAccess = false;
+    if (!existing) {
+      try {
+        await listingRepository.createContactAccess({
+          listing_id: listingId,
+          requester_user_id: payload.requesterUserId,
+          token_cost: payload.tokenCost,
+          paid_at: new Date().toISOString(),
+          revealed_at: new Date().toISOString(),
+          channel: 'whatsapp'
+        });
+        createdAccess = true;
+      } catch (error: any) {
+        if (error?.code !== '23505') {
+          throw error;
+        }
+        const raced = await listingRepository.getContactAccess(listingId, payload.requesterUserId);
+        if (!raced) {
+          throw error;
+        }
+      }
+    }
+
+    if (createdAccess) {
+      const bucketKey = await listingRepository.getHiddenBucketKeyByListingId(listingId);
+      if (bucketKey) {
+        await listingRepository.rotateHiddenBucketAfterReveal(bucketKey, listingId);
+      }
+    }
 
     return {
       whatsapp_e164: seller.whatsapp_e164,

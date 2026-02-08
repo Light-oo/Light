@@ -1,0 +1,66 @@
+﻿<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crear solicitud</title>
+    <link rel="stylesheet" href="/app/search.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <div class="title">Crear solicitud</div>
+          <div class="market">Ya está en el mercado.</div>
+        </div>
+        <a class="btn" id="backToSearch" href="/app/search.html">Volver</a>
+      </header>
+
+      <section id="demandForm" class="list">
+        <div class="card">
+          <div class="field">
+            <label class="label" for="brand">Marca</label>
+            <input id="brand" type="text" placeholder="Toyota" />
+          </div>
+          <div class="field">
+            <label class="label" for="model">Modelo</label>
+            <input id="model" type="text" placeholder="Corolla" />
+          </div>
+          <div class="field">
+            <label class="label" for="year">Año (exacto)</label>
+            <input id="year" type="number" placeholder="2014" />
+          </div>
+          <div class="field">
+            <label class="label" for="itemType">Tipo de pieza (alto nivel)</label>
+            <input id="itemType" type="text" placeholder="bumper, puerta..." />
+          </div>
+          <div class="field">
+            <label class="label" for="part">Pieza específica</label>
+            <input id="part" type="text" placeholder="Bumper delantero izquierdo" />
+          </div>
+          <div class="field">
+            <label class="label" for="details">Detalles adicionales (opcional)</label>
+            <textarea id="details" rows="4" placeholder="AWD, módulo completo, análogo/digital..."></textarea>
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="submitDemand">
+          Enviar solicitud
+        </button>
+      </section>
+
+      <section id="confirmation" class="card" hidden>
+        <div class="meta" id="confirmationMessage">Solicitud lista. Ya está en el mercado.</div>
+        <div class="actions">
+          <a class="btn btn-primary btn-block" id="confirmSearch" href="/app/search.html">
+            Volver a buscar
+          </a>
+          <button class="btn btn-block" id="newDemand">Crear otra solicitud</button>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script type="module" src="/app/demand.js"></script>
+  </body>
+</html>

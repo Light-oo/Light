@@ -35,3 +35,54 @@ export const getItemTypeRules = async (req: Request, res: Response, next: NextFu
     next(error);
   }
 };
+
+export const getBrands = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const active = req.query.active === 'true';
+    const brands = await catalogService.getBrands(active);
+    res.json({ ok: true, data: brands });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getModels = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const brandId = typeof req.query.brandId === 'string' ? req.query.brandId : null;
+    const active = req.query.active === 'true';
+    const models = await catalogService.getModels(brandId, active);
+    res.json({ ok: true, data: models });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSides = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const active = req.query.active === 'true';
+    const sides = await catalogService.getSides(active);
+    res.json({ ok: true, data: sides });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getPositions = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const active = req.query.active === 'true';
+    const positions = await catalogService.getPositions(active);
+    res.json({ ok: true, data: positions });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getYearOptions = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const active = req.query.active === 'true';
+    const years = await catalogService.getYearOptions(active);
+    res.json({ ok: true, data: years });
+  } catch (error) {
+    next(error);
+  }
+};
