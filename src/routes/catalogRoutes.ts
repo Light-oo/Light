@@ -17,12 +17,9 @@ router.get("/catalog/parts", async (req, res, next) => {
     return next(err);
   }
 
-  const { data, error } = await supabase
-    .from("part_options_view")
-    .select("part_id,label_es,sort_order,item_type_id")
-    .eq("item_type_id", itemTypeId)
-    .order("sort_order", { ascending: true })
-    .order("label_es", { ascending: true });
+  const { data, error } = await supabase.rpc("get_part_options", {
+    item_type_id: itemTypeId
+  });
 
   if (error) {
     console.error("supabase_error", { code: error.code, message: error.message });
@@ -38,11 +35,20 @@ router.get("/catalog/parts", async (req, res, next) => {
     }
   }
 
+  const sorted = [...(data ?? [])].sort((a, b) => {
+    const aSort = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const bSort = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+    if (aSort !== bSort) {
+      return aSort - bSort;
+    }
+    return String(a.label_es).localeCompare(String(b.label_es), "es");
+  });
+
   return res.json({
     ok: true,
     data: {
       itemTypeId,
-      options: (data ?? []).map((row) => ({
+      options: sorted.map((row) => ({
         id: row.part_id,
         label: row.label_es,
         sortOrder: row.sort_order
