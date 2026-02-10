@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import healthRoutes from "./routes/healthRoutes";
+import catalogRoutes from "./routes/catalogRoutes";
+import authRoutes from "./routes/authRoutes";
 import { requestId } from "./middleware/requestId";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -11,6 +13,8 @@ app.use(cors());
 app.use(requestId);
 
 app.use(healthRoutes);
+app.use(catalogRoutes);
+app.use(authRoutes);
 
 app.use(errorHandler);
 
