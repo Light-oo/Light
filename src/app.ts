@@ -4,6 +4,7 @@ import healthRoutes from "./routes/healthRoutes";
 import catalogRoutes from "./routes/catalogRoutes";
 import authRoutes from "./routes/authRoutes";
 import searchRoutes from "./routes/searchRoutes";
+import meRoutes from "./routes/meRoutes";
 import { requestId } from "./middleware/requestId";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -17,6 +18,7 @@ app.use(healthRoutes);
 app.use(catalogRoutes);
 app.use(authRoutes);
 app.use(searchRoutes);
+app.use(meRoutes);
 
 app.use(errorHandler);
 
