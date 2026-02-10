@@ -20,6 +20,10 @@ export async function requireAuth(
     return res.status(401).json({ ok: false, error: "unauthorized" });
   }
 
-  (req as Request & { user: { id: string } }).user = { id: data.user.id };
+  (req as Request & { user: { id: string }; authToken: string }).user = {
+    id: data.user.id
+  };
+  (req as Request & { user: { id: string }; authToken: string }).authToken =
+    token;
   next();
 }

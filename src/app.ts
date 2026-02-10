@@ -3,6 +3,7 @@ import cors from "cors";
 import healthRoutes from "./routes/healthRoutes";
 import catalogRoutes from "./routes/catalogRoutes";
 import authRoutes from "./routes/authRoutes";
+import searchRoutes from "./routes/searchRoutes";
 import { requestId } from "./middleware/requestId";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -15,6 +16,7 @@ app.use(requestId);
 app.use(healthRoutes);
 app.use(catalogRoutes);
 app.use(authRoutes);
+app.use(searchRoutes);
 
 app.use(errorHandler);
 
