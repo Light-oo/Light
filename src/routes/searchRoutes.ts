@@ -17,6 +17,60 @@ const querySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(50).optional()
 });
 
+const demandsQuerySchema = z
+  .object({
+    brandId: z.string().uuid().optional(),
+    modelId: z.string().uuid().optional(),
+    yearId: z.string().uuid().optional(),
+    itemTypeId: z.string().uuid().optional(),
+    partId: z.string().uuid().optional()
+  })
+  .strict();
+
+router.get("/search/demands", requireAuth, async (req, res, next) => {
+  let parsed: z.infer<typeof demandsQuerySchema>;
+  try {
+    parsed = demandsQuerySchema.parse(req.query);
+  } catch (err) {
+    return next(err);
+  }
+
+  const authToken = (req as unknown as { authToken: string }).authToken;
+  const supabase = createSupabaseAnon({ accessToken: authToken });
+
+  let query = supabase
+    .from("demands")
+    .select(
+      "id,requester_user_id,status,brand_id,model_id,year_id,item_type_id,part_id,details_text,created_at"
+    )
+    .eq("status", "open");
+
+  if (parsed.brandId) {
+    query = query.eq("brand_id", parsed.brandId);
+  }
+  if (parsed.modelId) {
+    query = query.eq("model_id", parsed.modelId);
+  }
+  if (parsed.yearId) {
+    query = query.eq("year_id", parsed.yearId);
+  }
+  if (parsed.itemTypeId) {
+    query = query.eq("item_type_id", parsed.itemTypeId);
+  }
+  if (parsed.partId) {
+    query = query.eq("part_id", parsed.partId);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("supabase_error", { code: error.code, message: error.message });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  return res.json({ ok: true, data: data ?? [] });
+});
+
 router.get("/search/listings", requireAuth, async (req, res, next) => {
   let parsed: z.infer<typeof querySchema>;
   try {
