@@ -15,8 +15,23 @@ export async function requireAuth(
     return res.status(401).json({ ok: false, error: "unauthorized" });
   }
 
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data.user) {
+  let data: { user: { id: string } | null } | null = null;
+  let error: unknown = null;
+  try {
+    ({ data, error } = await supabase.auth.getUser(token));
+  } catch (err) {
+    return next(err);
+  }
+
+  if (error) {
+    const status = (error as { status?: number }).status;
+    if (status === 400 || status === 401 || status === 403) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    return next(error);
+  }
+
+  if (!data?.user) {
     return res.status(401).json({ ok: false, error: "unauthorized" });
   }
 

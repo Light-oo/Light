@@ -19,8 +19,14 @@ export function errorHandler(
     });
   }
 
-  if (typeof err === "object" && err !== null && "status" in err) {
+  if (typeof err === "object" && err !== null) {
     const status = (err as { status?: number }).status;
+    const type = (err as { type?: string }).type;
+
+    if (type === "entity.parse.failed" || (err instanceof SyntaxError && status === 400)) {
+      return res.status(400).json({ ok: false, error: "invalid_request" });
+    }
+
     if (status === 401) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }

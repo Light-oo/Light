@@ -57,17 +57,7 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
   const didConsume = (row as any)?.did_consume ?? null;
   const whatsappUrl = whatsappRaw ? toWhatsAppUrl(whatsappRaw) : null;
   if (!whatsappUrl) {
-    return res.status(400).json({
-      ok: false,
-      error: "invalid_request",
-      issues: [
-        {
-          path: "listingId",
-          message: "listing_has_no_contact",
-          code: "missing"
-        }
-      ]
-    });
+    return res.status(400).json({ ok: false, error: "listing_has_no_contact" });
   }
 
   return res.json({
