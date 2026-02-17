@@ -5,7 +5,12 @@ import { createSupabaseAnon } from "../lib/supabase";
 
 const router = Router();
 
-const querySchema = z.object({
+const paginationQuerySchema = {
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(50).optional()
+};
+
+const buyListingsQuerySchema = z.object({
   mode: z.literal("BUY"),
   brandId: z.string().uuid(),
   modelId: z.string().uuid(),
@@ -13,9 +18,32 @@ const querySchema = z.object({
   itemTypeId: z.string().uuid(),
   partId: z.string().uuid(),
   detailsText: z.string().optional(),
-  page: z.coerce.number().int().min(1).optional(),
-  pageSize: z.coerce.number().int().min(1).max(50).optional()
-});
+  ...paginationQuerySchema
+}).strict();
+
+const sellListingsQuerySchema = z.object({
+  mode: z.literal("SELL"),
+  brandId: z.string().uuid().optional(),
+  modelId: z.string().uuid().optional(),
+  yearId: z.string().uuid().optional(),
+  itemTypeId: z.string().uuid().optional(),
+  partId: z.string().uuid().optional(),
+  ...paginationQuerySchema
+}).strict();
+
+const listingsQuerySchema = z.discriminatedUnion("mode", [
+  buyListingsQuerySchema,
+  sellListingsQuerySchema
+]);
+
+function isDemandOpenDuplicate(error: any) {
+  if ((error?.code ?? "") !== "23505") {
+    return false;
+  }
+  const text = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`
+    .toLowerCase();
+  return text.includes("demands_open_unique_signature");
+}
 
 const demandsQuerySchema = z
   .object({
@@ -72,9 +100,9 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
 });
 
 router.get("/search/listings", requireAuth, async (req, res, next) => {
-  let parsed: z.infer<typeof querySchema>;
+  let parsed: z.infer<typeof listingsQuerySchema>;
   try {
-    parsed = querySchema.parse(req.query);
+    parsed = listingsQuerySchema.parse(req.query);
   } catch (err) {
     return next(err);
   }
@@ -84,6 +112,72 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
 
   const authToken = (req as unknown as { authToken: string }).authToken;
   const supabase = createSupabaseAnon({ accessToken: authToken });
+
+  if (parsed.mode === "SELL") {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let demandsQuery = supabase
+      .from("demands")
+      .select(
+        "id,requester_user_id,status,brand_id,model_id,year_id,item_type_id,part_id,details_text,created_at",
+        { count: "exact" }
+      )
+      .eq("status", "open");
+
+    if (parsed.brandId) {
+      demandsQuery = demandsQuery.eq("brand_id", parsed.brandId);
+    }
+    if (parsed.modelId) {
+      demandsQuery = demandsQuery.eq("model_id", parsed.modelId);
+    }
+    if (parsed.yearId) {
+      demandsQuery = demandsQuery.eq("year_id", parsed.yearId);
+    }
+    if (parsed.itemTypeId) {
+      demandsQuery = demandsQuery.eq("item_type_id", parsed.itemTypeId);
+    }
+    if (parsed.partId) {
+      demandsQuery = demandsQuery.eq("part_id", parsed.partId);
+    }
+
+    const { data, count, error } = await demandsQuery
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      console.error("supabase_error", { code: error.code, message: error.message });
+      return res.status(500).json({ ok: false, error: "unexpected_error" });
+    }
+
+    const results = (data ?? []).map((row: any) => ({
+      cardType: "buy",
+      demandId: row.id,
+      what: {
+        brandId: row.brand_id,
+        modelId: row.model_id,
+        yearId: row.year_id,
+        itemTypeId: row.item_type_id,
+        partId: row.part_id
+      },
+      request: {
+        detailsText: row.details_text
+      },
+      audit: {
+        createdAt: row.created_at,
+        requesterUserId: row.requester_user_id,
+        status: row.status
+      }
+    }));
+
+    return res.json({
+      ok: true,
+      results,
+      page,
+      pageSize,
+      total: count ?? 0
+    });
+  }
 
   const { data, error } = await supabase.rpc("get_sell_cards", {
     brand_id: parsed.brandId,
@@ -158,23 +252,59 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
 
   if (results.length === 0) {
     const requesterId = (req as unknown as { user: { id: string } }).user.id;
-    const { error: insertError } = await supabase.from("demands").insert({
+    const demandSignature = {
       requester_user_id: requesterId,
       status: "open",
       brand_id: parsed.brandId,
       model_id: parsed.modelId,
       year_id: parsed.yearId,
       item_type_id: parsed.itemTypeId,
-      part_id: parsed.partId,
+      part_id: parsed.partId
+    };
+
+    const { error: insertError } = await supabase.from("demands").insert({
+      ...demandSignature,
       details_text: parsed.detailsText ?? null
     });
 
     if (insertError) {
+      if (isDemandOpenDuplicate(insertError)) {
+        console.warn("handled_duplicate_demand_existing_open", {
+          code: insertError.code,
+          message: insertError.message,
+          ...demandSignature
+        });
+        const { data: existingDemand, error: existingDemandError } = await supabase
+          .from("demands")
+          .select("id")
+          .eq("requester_user_id", requesterId)
+          .eq("status", "open")
+          .eq("brand_id", parsed.brandId)
+          .eq("model_id", parsed.modelId)
+          .eq("year_id", parsed.yearId)
+          .eq("item_type_id", parsed.itemTypeId)
+          .eq("part_id", parsed.partId)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingDemandError) {
+          console.error("supabase_error", {
+            code: existingDemandError.code,
+            message: existingDemandError.message
+          });
+          return res.status(500).json({ ok: false, error: "unexpected_error" });
+        }
+
+        if (!existingDemand) {
+          console.warn("handled_duplicate_demand_missing_after_select", demandSignature);
+        }
+      } else {
       console.error("supabase_error", {
         code: insertError.code,
         message: insertError.message
       });
       return res.status(500).json({ ok: false, error: "unexpected_error" });
+      }
     }
   }
 

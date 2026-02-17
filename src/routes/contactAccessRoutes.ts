@@ -28,6 +28,27 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
   const authToken = (req as unknown as { authToken: string }).authToken;
   const supabase = createSupabaseAnon({ accessToken: authToken });
 
+  // Pilot invariant: only active SELL listings are revealable.
+  const { data: activeCard, error: activeCardError } = await supabase
+    .from("market_sell_cards_view")
+    .select("listing_id")
+    .eq("listing_id", listingId)
+    .maybeSingle();
+
+  if (activeCardError) {
+    console.error("supabase_error", {
+      code: activeCardError.code,
+      message: activeCardError.message,
+      details: (activeCardError as any)?.details,
+      hint: (activeCardError as any)?.hint
+    });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  if (!activeCard) {
+    return res.status(400).json({ ok: false, error: "listing_not_active" });
+  }
+
   const { data, error } = await supabase.rpc(
     "consume_token_and_get_whatsapp",
     { p_listing_id: listingId }
@@ -40,6 +61,9 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
   // Treat the RPC-raised exception as a first-class business error
   if (code === "P0001" && message === "insufficient_tokens") {
     return res.status(402).json({ ok: false, error: "insufficient_tokens" });
+  }
+  if (code === "P0001" && message === "listing_not_active") {
+    return res.status(400).json({ ok: false, error: "listing_not_active" });
   }
 
   console.error("supabase_error", {

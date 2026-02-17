@@ -6,6 +6,7 @@ import authRoutes from "./routes/authRoutes";
 import searchRoutes from "./routes/searchRoutes";
 import meRoutes from "./routes/meRoutes";
 import contactAccessRoutes from "./routes/contactAccessRoutes";
+import listingsRoutes from "./routes/listingsRoutes";
 import { requestId } from "./middleware/requestId";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -21,6 +22,7 @@ app.use(authRoutes);
 app.use(searchRoutes);
 app.use(meRoutes);
 app.use(contactAccessRoutes);
+app.use(listingsRoutes);
 
 app.use(errorHandler);
 
