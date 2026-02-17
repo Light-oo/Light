@@ -1,3 +1,14 @@
 /.env
 /node_modules
 /dist
+
+# Local curl / test payload files
+login_*.json
+post_listing*.json
+patch_*.json
+put_listing*.json
+set_tokens_*.json
+
+*_owner_test.json
+*_bad.json
+*_test.json
