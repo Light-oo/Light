@@ -12,3 +12,5 @@ set_tokens_*.json
 *_owner_test.json
 *_bad.json
 *_test.json
+/frontend/node_modules/
+/frontend/.env
