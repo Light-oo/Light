@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
+import { logWarn } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
+import { getProfileStatus } from "../services/profileStatus";
 
 const router = Router();
 
@@ -26,7 +28,22 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
   }
 
   const authToken = (req as unknown as { authToken: string }).authToken;
+  const userId = (req as unknown as { user: { id: string } }).user.id;
   const supabase = createSupabaseAnon({ accessToken: authToken });
+
+  try {
+    const profileStatus = await getProfileStatus(authToken, userId);
+    if (!profileStatus.profileComplete) {
+      logWarn(req, "reveal_blocked_profile_incomplete", { userId, listingId });
+      return res.status(400).json({ ok: false, error: "add_whatsapp_first" });
+    }
+  } catch (profileStatusError: any) {
+    console.error("profile_status_error", {
+      code: profileStatusError?.code,
+      message: profileStatusError?.message
+    });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
 
   // Pilot invariant: only active SELL listings are revealable.
   const { data: activeCard, error: activeCardError } = await supabase
