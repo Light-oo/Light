@@ -61,19 +61,18 @@ router.post("/listings", requireAuth, async (req, res, next) => {
   const userId = (req as unknown as { user: { id: string } }).user.id;
   const supabase = createSupabaseAnon({ accessToken: authToken });
 
-  // Seller gate from DB source-of-truth.
-  const { data: sellerProfile, error: sellerGateError } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("id,role")
     .eq("id", userId)
     .maybeSingle();
 
-  if (sellerGateError) {
-    logDbError("seller_gate_profile", sellerGateError);
+  if (profileError) {
+    logDbError("profile_select", profileError);
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
-  if (!sellerProfile || sellerProfile.role !== "seller") {
+  if (!profile) {
     return res.status(403).json({ ok: false, error: "forbidden" });
   }
 
@@ -96,6 +95,20 @@ router.post("/listings", requireAuth, async (req, res, next) => {
     logWarn(req, "publish_blocked_profile_incomplete", { userId });
     return res.status(400).json({ ok: false, error: "add_whatsapp_first" });
   }
+
+  if (profile.role !== "seller") {
+    const { error: roleUpgradeError } = await supabase
+      .from("profiles")
+      .update({ role: "seller" })
+      .eq("id", userId)
+      .neq("role", "seller");
+
+    if (roleUpgradeError) {
+      logDbError("role_upgrade", roleUpgradeError);
+      return res.status(500).json({ ok: false, error: "unexpected_error" });
+    }
+  }
+
   const { data: duplicateRow, error: duplicateCheckError } = await supabase
     .from("item_specs")
     .select("listing_id,listings!inner(id)")
