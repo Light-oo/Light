@@ -5,7 +5,8 @@ export function AppLayout() {
   const { isGlobalLoading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const isSellActive = location.pathname.startsWith("/publish");
+  const isSellActive =
+    location.pathname.startsWith("/publish") || location.pathname.startsWith("/sell-demands");
   const activeModeLabel = isSellActive ? "SELL" : "BUY";
 
   return (

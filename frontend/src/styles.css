@@ -76,6 +76,59 @@ body {
   letter-spacing: 0.08em;
 }
 
+.whatsapp-field {
+  gap: 0.45rem;
+}
+
+.phone-input-shell {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.phone-country-fixed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.65rem 0.7rem;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  min-width: 72px;
+  justify-content: center;
+}
+
+.phone-flag {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.phone-caret {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.phone-prefix {
+  padding: 0.65rem 0.65rem;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.phone-local-input {
+  border: 0;
+  border-radius: 0;
+  min-width: 0;
+}
+
+.phone-local-input:focus {
+  outline: none;
+}
+
 .card {
   background: var(--bg);
   border: 1px solid var(--line);

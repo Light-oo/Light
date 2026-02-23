@@ -172,8 +172,8 @@ export function MyListingsPage() {
     const specs = row.item_specs;
     const price = resolvePrice(row, activePriceMap);
     const location = resolveLocation(row);
-    if (!specs || !price) {
-      setError("Unable to republish this listing. Listing data is incomplete.");
+    if (!specs) {
+      setError("Unable to republish this listing. Listing signature is incomplete.");
       return;
     }
 
@@ -190,7 +190,7 @@ export function MyListingsPage() {
           yearId: specs.year_id,
           itemTypeId: specs.item_type_id,
           partId: specs.part_id,
-          priceAmount: String(price.amount),
+          priceAmount: price ? String(price.amount) : "",
           location: location ?? undefined
         }
       }

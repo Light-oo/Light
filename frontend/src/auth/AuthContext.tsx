@@ -12,7 +12,7 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, confirmPassword: string) => Promise<void>;
+  signUp: (email: string, password: string, confirmPassword: string, whatsapp: string) => Promise<void>;
   signOut: () => void;
   api: ReturnType<typeof createApiClient>;
   isGlobalLoading: boolean;
@@ -98,11 +98,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await establishSession(token, email.trim());
   }, [establishSession]);
 
-  const signUp = useCallback(async (email: string, password: string, confirmPassword: string) => {
+  const signUp = useCallback(async (email: string, password: string, confirmPassword: string, whatsapp: string) => {
     const response = await api.post<{ ok: true; data: { access_token: string } }>("/auth/signup", {
       email: email.trim(),
       password,
-      confirm_password: confirmPassword
+      confirm_password: confirmPassword,
+      whatsapp
     });
 
     await establishSession(response.data.access_token, email.trim());

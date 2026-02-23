@@ -8,6 +8,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { MyListingsPage } from "./pages/MyListingsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { PublishPage } from "./pages/PublishPage";
+import { SellDemandsPage } from "./pages/SellDemandsPage";
 import { SignupPage } from "./pages/SignupPage";
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
         <Route element={<AppLayout />}>
           <Route path="/search" element={<BuySearchPage />} />
           <Route path="/publish" element={<PublishPage />} />
+          <Route path="/sell-demands" element={<SellDemandsPage />} />
           <Route path="/my-listings" element={<MyListingsPage />} />
           <Route path="/account" element={<AccountPage />} />
         </Route>

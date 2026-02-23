@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
 import { logWarn } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
-import { getProfileStatus } from "../services/profileStatus";
+import { requireWhatsappNumber } from "../services/profileStatus";
 
 const router = Router();
 
@@ -84,17 +84,14 @@ router.post("/listings", requireAuth, async (req, res, next) => {
     return next(err);
   }
 
-  let profileStatus: Awaited<ReturnType<typeof getProfileStatus>>;
   try {
-    profileStatus = await getProfileStatus(authToken, userId);
+    await requireWhatsappNumber(authToken, userId);
   } catch (profileStatusError: any) {
+    if (String(profileStatusError?.code ?? "") === "WHATSAPP_REQUIRED") {
+      return res.status(403).json({ ok: false, error: "WHATSAPP_REQUIRED" });
+    }
     logDbError("profile_status", profileStatusError);
     return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  if (!profileStatus.profileComplete) {
-    logWarn(req, "publish_blocked_profile_incomplete", { userId });
-    return res.status(400).json({ ok: false, error: "add_whatsapp_first" });
   }
 
   if (profile.role !== "seller") {
@@ -247,6 +244,17 @@ router.patch("/listings/:listingId/status", requireAuth, async (req, res, next) 
 
   if (!profile || profile.role !== "seller") {
     return res.status(403).json({ ok: false, error: "forbidden" });
+  }
+
+  try {
+    await requireWhatsappNumber(authToken, userId);
+  } catch (profileStatusError: any) {
+    if (String(profileStatusError?.code ?? "") === "WHATSAPP_REQUIRED") {
+      logWarn(req, "listing_status_blocked_whatsapp_missing", { userId, listingId });
+      return res.status(403).json({ ok: false, error: "WHATSAPP_REQUIRED" });
+    }
+    logDbError("patch_status_whatsapp_guard", profileStatusError);
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
   const { data: updatedListing, error: updateError } = await supabase

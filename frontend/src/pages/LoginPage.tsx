@@ -67,7 +67,7 @@ export function LoginPage() {
           {loading ? "Signing in..." : "Sign in"}
         </button>
         <button type="button" className="ghost" onClick={() => navigate("/signup")}>
-          Create Account
+          New User? Create an Account.
         </button>
       </form>
     </div>

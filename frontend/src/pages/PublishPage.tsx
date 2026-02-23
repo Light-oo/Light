@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
 import { FilterSelect } from "../components/FilterSelect";
@@ -74,6 +74,7 @@ type RepublishPrefillState = {
 export function PublishPage() {
   const { api, token } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [brands, setBrands] = useState<Option[]>([]);
   const [models, setModels] = useState<Option[]>([]);
   const [years, setYears] = useState<Option[]>([]);
@@ -284,6 +285,12 @@ export function PublishPage() {
   return (
     <div className="screen stack gap-lg">
       <Card title="Publish Listing">
+        <div className="row-between" style={{ marginBottom: "0.6rem" }}>
+          <small>SELL mode</small>
+          <button type="button" className="ghost" onClick={() => navigate("/sell-demands")}>
+            Search Demands
+          </button>
+        </div>
         <form className="stack" onSubmit={onSubmit}>
           <FilterSelect
             label="Brand"

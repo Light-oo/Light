@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+﻿import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
 import { FilterSelect } from "../components/FilterSelect";
@@ -29,6 +29,7 @@ type SearchResponse = {
   total: number;
   data?: {
     reason?: string;
+    demandAction?: "created" | "updated" | "existing";
   };
 };
 
@@ -294,6 +295,12 @@ export function BuySearchPage() {
         if (response.results.length === 0) {
           if (response.data?.reason === "ONLY_OWN_LISTINGS") {
             setMessage("No results because you already have an active offer for this item.");
+          } else if (response.data?.reason === "WHATSAPP_REQUIRED") {
+            setMessage("Registra tu número de WhatsApp para continuar.");
+          } else if (response.data?.demandAction === "updated") {
+            setMessage("Demand was updated.");
+          } else if (response.data?.demandAction === "existing") {
+            setMessage("Demand already exists.");
           } else {
             setMessage("No results. Demand was registered for this signature.");
           }
@@ -511,4 +518,6 @@ export function BuySearchPage() {
     </div>
   );
 }
+
+
 

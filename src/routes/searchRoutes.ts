@@ -2,6 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
 import { createSupabaseAnon } from "../lib/supabase";
+import { requireWhatsappNumber } from "../services/profileStatus";
+import { searchOpenDemands } from "../services/demandSearch";
 
 const router = Router();
 
@@ -47,11 +49,17 @@ function isDemandOpenDuplicate(error: any) {
 
 const demandsQuerySchema = z
   .object({
+    brand_id: z.string().uuid().optional(),
+    model_id: z.string().uuid().optional(),
+    year_id: z.string().uuid().optional(),
+    item_type_id: z.string().uuid().optional(),
+    part_id: z.string().uuid().optional(),
     brandId: z.string().uuid().optional(),
     modelId: z.string().uuid().optional(),
     yearId: z.string().uuid().optional(),
     itemTypeId: z.string().uuid().optional(),
-    partId: z.string().uuid().optional()
+    partId: z.string().uuid().optional(),
+    ...paginationQuerySchema
   })
   .strict();
 
@@ -64,39 +72,101 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
   }
 
   const authToken = (req as unknown as { authToken: string }).authToken;
+  const requesterUserId = (req as unknown as { user: { id: string } }).user.id;
   const supabase = createSupabaseAnon({ accessToken: authToken });
+  const page = parsed.page ?? 1;
+  const pageSize = parsed.pageSize ?? 20;
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
 
-  let query = supabase
-    .from("demands")
-    .select(
-      "id,requester_user_id,status,brand_id,model_id,year_id,item_type_id,part_id,details_text,created_at"
-    )
-    .eq("status", "open");
+  const filters = {
+    brandId: parsed.brandId ?? parsed.brand_id,
+    modelId: parsed.modelId ?? parsed.model_id,
+    yearId: parsed.yearId ?? parsed.year_id,
+    itemTypeId: parsed.itemTypeId ?? parsed.item_type_id,
+    partId: parsed.partId ?? parsed.part_id
+  };
 
-  if (parsed.brandId) {
-    query = query.eq("brand_id", parsed.brandId);
-  }
-  if (parsed.modelId) {
-    query = query.eq("model_id", parsed.modelId);
-  }
-  if (parsed.yearId) {
-    query = query.eq("year_id", parsed.yearId);
-  }
-  if (parsed.itemTypeId) {
-    query = query.eq("item_type_id", parsed.itemTypeId);
-  }
-  if (parsed.partId) {
-    query = query.eq("part_id", parsed.partId);
-  }
+  console.info("search_demands_query", {
+    requesterUserId,
+    requesterProfileId: requesterUserId,
+    table: "demands",
+    where: {
+      status: "open",
+      ...(filters.brandId ? { brand_id: filters.brandId } : {}),
+      ...(filters.modelId ? { model_id: filters.modelId } : {}),
+      ...(filters.yearId ? { year_id: filters.yearId } : {}),
+      ...(filters.itemTypeId ? { item_type_id: filters.itemTypeId } : {}),
+      ...(filters.partId ? { part_id: filters.partId } : {})
+    },
+    orderBy: { created_at: "desc" },
+    range: { from, to }
+  });
 
-  const { data, error } = await query.order("created_at", { ascending: false });
+  const { data, count, error } = await searchOpenDemands({
+    supabase,
+    filters,
+    page,
+    pageSize
+  });
 
   if (error) {
-    console.error("supabase_error", { code: error.code, message: error.message });
+    console.error("supabase_error", {
+      route: "GET /search/demands",
+      requesterUserId,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint
+    });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
-  return res.json({ ok: true, data: data ?? [] });
+  console.info("search_demands_result", {
+    requesterUserId,
+    count: count ?? 0,
+    rows: (data ?? []).length,
+    filtersApplied: Object.values(filters).filter(Boolean).length
+  });
+
+  if ((count ?? 0) === 0) {
+    console.warn("search_demands_empty_result", {
+      requesterUserId,
+      note: "If OPEN demands exist in DB but this is empty, verify SELECT RLS policy for authenticated users on public.demands.",
+      statusFilter: "open",
+      filters
+    });
+  }
+
+  const results = (data ?? []).map((row: any) => ({
+    cardType: "buy",
+    demandId: row.id,
+    what: {
+      brandId: row.brand_id,
+      modelId: row.model_id,
+      yearId: row.year_id,
+      itemTypeId: row.item_type_id,
+      partId: row.part_id
+    },
+    request: {
+      detailsText: row.details_text
+    },
+    audit: {
+      createdAt: row.created_at,
+      requesterUserId: row.requester_user_id,
+      status: row.status
+    }
+  }));
+
+  return res.json({
+    ok: true,
+    data: {
+      results,
+      page,
+      pageSize,
+      total: count ?? 0
+    }
+  });
 });
 
 router.get("/search/listings", requireAuth, async (req, res, next) => {
@@ -279,6 +349,8 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
     }
   }));
 
+  let zeroResultsData: Record<string, unknown> | undefined;
+
   if (results.length === 0) {
     if (selfOwnedHiddenCount > 0) {
       return res.json({
@@ -291,6 +363,28 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
           reason: "ONLY_OWN_LISTINGS"
         }
       });
+    }
+
+    try {
+      await requireWhatsappNumber(authToken, requesterUserId);
+    } catch (whatsappGuardError: any) {
+      if (String(whatsappGuardError?.code ?? "") === "WHATSAPP_REQUIRED") {
+        return res.json({
+          ok: true,
+          results,
+          page,
+          pageSize,
+          total: 0,
+          data: {
+            reason: "WHATSAPP_REQUIRED"
+          }
+        });
+      }
+      console.error("supabase_error", {
+        code: whatsappGuardError?.code,
+        message: whatsappGuardError?.message
+      });
+      return res.status(500).json({ ok: false, error: "unexpected_error" });
     }
 
     const demandSignature = {
@@ -362,6 +456,15 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
             demandId: existingDemand.id,
             didUpdateDetails: true
           });
+          zeroResultsData = {
+            ...(zeroResultsData ?? {}),
+            demandAction: "updated"
+          };
+        } else {
+          zeroResultsData = {
+            ...(zeroResultsData ?? {}),
+            demandAction: "existing"
+          };
         }
       } else {
       console.error("supabase_error", {
@@ -370,16 +473,27 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
       });
       return res.status(500).json({ ok: false, error: "unexpected_error" });
       }
+    } else {
+      zeroResultsData = {
+        ...(zeroResultsData ?? {}),
+        demandAction: "created"
+      };
     }
   }
 
-  return res.json({
+  const responsePayload: Record<string, unknown> = {
     ok: true,
     results,
     page,
     pageSize,
     total: results.length
-  });
+  };
+
+  if (zeroResultsData) {
+    responsePayload.data = zeroResultsData;
+  }
+
+  return res.json(responsePayload);
 });
 
 export default router;
