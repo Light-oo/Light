@@ -41,6 +41,7 @@ function logDbError(step: string, error: any) {
   console.error("listings_step_error", {
     step,
     code: error?.code,
+    constraint: error?.constraint,
     message: error?.message,
     details: error?.details,
     hint: error?.hint
@@ -132,12 +133,21 @@ router.post("/listings", requireAuth, async (req, res, next) => {
     return res.status(409).json({ ok: false, error: "duplicate_listing" });
   }
 
+  const intentionSignature = [
+    parsed.brandId,
+    parsed.modelId,
+    parsed.yearId,
+    parsed.itemTypeId,
+    parsed.partId
+  ].join("|");
+
   const listingId = randomUUID();
   const listingPayload = {
     id: listingId,
     listing_type: "sell",
     status: "active",
-    seller_profile_id: userId
+    seller_profile_id: userId,
+    intention_signature: intentionSignature
   };
   const { error: listingError } = await supabase
     .from("listings")

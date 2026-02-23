@@ -111,6 +111,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
   const pageSize = parsed.pageSize ?? 20;
 
   const authToken = (req as unknown as { authToken: string }).authToken;
+  const requesterUserId = (req as unknown as { user: { id: string } }).user.id;
   const supabase = createSupabaseAnon({ accessToken: authToken });
 
   if (parsed.mode === "SELL") {
@@ -221,7 +222,35 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
     }
   }
 
-  const results = (data ?? []).map((row: any) => ({
+  let buyRows = (data ?? []) as any[];
+  let selfOwnedHiddenCount = 0;
+
+  if (buyRows.length > 0) {
+    const listingIds = buyRows.map((row) => row.listing_id).filter(Boolean);
+    if (listingIds.length > 0) {
+      const { data: ownListings, error: ownListingsError } = await supabase
+        .from("listings")
+        .select("id")
+        .eq("seller_profile_id", requesterUserId)
+        .in("id", listingIds);
+
+      if (ownListingsError) {
+        console.error("supabase_error", {
+          code: ownListingsError.code,
+          message: ownListingsError.message
+        });
+        return res.status(500).json({ ok: false, error: "unexpected_error" });
+      }
+
+      if (ownListings && ownListings.length > 0) {
+        selfOwnedHiddenCount = ownListings.length;
+        const ownIds = new Set(ownListings.map((row: any) => row.id));
+        buyRows = buyRows.filter((row) => !ownIds.has(row.listing_id));
+      }
+    }
+  }
+
+  const results = buyRows.map((row: any) => ({
     cardType: "sell",
     listingId: row.listing_id,
     what: {
@@ -251,9 +280,21 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
   }));
 
   if (results.length === 0) {
-    const requesterId = (req as unknown as { user: { id: string } }).user.id;
+    if (selfOwnedHiddenCount > 0) {
+      return res.json({
+        ok: true,
+        results,
+        page,
+        pageSize,
+        total: 0,
+        data: {
+          reason: "ONLY_OWN_LISTINGS"
+        }
+      });
+    }
+
     const demandSignature = {
-      requester_user_id: requesterId,
+      requester_user_id: requesterUserId,
       status: "open",
       brand_id: parsed.brandId,
       model_id: parsed.modelId,
@@ -269,6 +310,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
 
     if (insertError) {
       if (isDemandOpenDuplicate(insertError)) {
+        const incomingDetailsText = parsed.detailsText?.trim() ?? "";
         console.warn("handled_duplicate_demand_existing_open", {
           code: insertError.code,
           message: insertError.message,
@@ -276,8 +318,8 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         });
         const { data: existingDemand, error: existingDemandError } = await supabase
           .from("demands")
-          .select("id")
-          .eq("requester_user_id", requesterId)
+          .select("id,details_text")
+          .eq("requester_user_id", requesterUserId)
           .eq("status", "open")
           .eq("brand_id", parsed.brandId)
           .eq("model_id", parsed.modelId)
@@ -297,6 +339,29 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
 
         if (!existingDemand) {
           console.warn("handled_duplicate_demand_missing_after_select", demandSignature);
+        } else if (incomingDetailsText.length > 0) {
+          const { error: updateExistingDemandError } = await supabase
+            .from("demands")
+            .update({
+              details_text: incomingDetailsText,
+              updated_at: new Date().toISOString()
+            })
+            .eq("id", existingDemand.id)
+            .eq("requester_user_id", requesterUserId)
+            .eq("status", "open");
+
+          if (updateExistingDemandError) {
+            console.error("supabase_error", {
+              code: updateExistingDemandError.code,
+              message: updateExistingDemandError.message
+            });
+            return res.status(500).json({ ok: false, error: "unexpected_error" });
+          }
+
+          console.warn("handled_duplicate_demand_updated_details", {
+            demandId: existingDemand.id,
+            didUpdateDetails: true
+          });
         }
       } else {
       console.error("supabase_error", {

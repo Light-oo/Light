@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
 import { FilterSelect } from "../components/FilterSelect";
@@ -6,13 +7,41 @@ import { PriceInput } from "../components/PriceInput";
 import { ApiError } from "../lib/apiClient";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
-import { extractBrandOptions, extractItemTypeOptions, extractModelOptions, extractYearOptions, type Option } from "../lib/marketOptions";
-import { fetchMarketOptions, type MarketOptionRow } from "../lib/supabaseData";
+import { type Option } from "../lib/marketOptions";
 
 type PartsResponse = {
   ok: true;
   data: {
-    options: Array<{ id: string; label: string }>;
+    options: Array<{ id: string; key: string; label_es: string }>;
+  };
+};
+
+type BrandsResponse = {
+  ok: true;
+  data: {
+    options: Array<{ id: string; key: string; label_es: string }>;
+  };
+};
+
+type ModelsResponse = {
+  ok: true;
+  data: {
+    brand_id: string;
+    options: Array<{ id: string; key: string; label_es: string }>;
+  };
+};
+
+type YearsResponse = {
+  ok: true;
+  data: {
+    options: Array<{ id: string; key?: string | null; label_es: string; year?: number | null }>;
+  };
+};
+
+type ItemTypesResponse = {
+  ok: true;
+  data: {
+    options: Array<{ id: string; key: string; label_es: string }>;
   };
 };
 
@@ -23,18 +52,63 @@ const initialState = {
   itemTypeId: "",
   partId: "",
   priceAmount: "",
-  priceType: "fixed"
+  locationDepartment: "",
+  locationMunicipality: ""
+};
+
+type RepublishPrefillState = {
+  republishPrefill?: {
+    brandId: string;
+    modelId: string;
+    yearId: string;
+    itemTypeId: string;
+    partId: string;
+    priceAmount: string;
+    location?: {
+      department: string;
+      municipality: string;
+    };
+  };
 };
 
 export function PublishPage() {
   const { api, token } = useAuth();
-  const [catalogRows, setCatalogRows] = useState<MarketOptionRow[]>([]);
+  const location = useLocation();
+  const [brands, setBrands] = useState<Option[]>([]);
+  const [models, setModels] = useState<Option[]>([]);
+  const [years, setYears] = useState<Option[]>([]);
+  const [catalogItemTypes, setCatalogItemTypes] = useState<Option[]>([]);
   const [partOptions, setPartOptions] = useState<Option[]>([]);
   const [form, setForm] = useState(initialState);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const prefillAppliedRef = useRef(false);
   const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialState), [form]);
+
+  useEffect(() => {
+    if (prefillAppliedRef.current) {
+      return;
+    }
+    prefillAppliedRef.current = true;
+
+    const state = (location.state as RepublishPrefillState | null) ?? null;
+    const prefill = state?.republishPrefill;
+    if (!prefill) {
+      return;
+    }
+
+    setForm({
+      brandId: prefill.brandId,
+      modelId: prefill.modelId,
+      yearId: prefill.yearId,
+      itemTypeId: prefill.itemTypeId,
+      partId: prefill.partId,
+      priceAmount: prefill.priceAmount,
+      locationDepartment: prefill.location?.department ?? "",
+      locationMunicipality: prefill.location?.municipality ?? ""
+    });
+  }, [location.state]);
 
   useEffect(() => {
     function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -55,10 +129,60 @@ export function PublishPage() {
       return;
     }
 
-    fetchMarketOptions(token)
-      .then(setCatalogRows)
-      .catch(() => setError("Unable to load catalog options."));
-  }, [token]);
+    console.log("[catalog] publish.brands.load:start");
+    api.get<BrandsResponse>("/catalog/brands")
+      .then((response) => {
+        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
+        console.log("[catalog] publish.brands.load:success", { count: options.length });
+        setBrands(options);
+      })
+      .catch((err) => {
+        console.log("[catalog] publish.brands.load:error", err);
+        setError("Unable to load catalog options.");
+      });
+
+    console.log("[catalog] publish.years.load:start");
+    api.get<YearsResponse>("/catalog/years")
+      .then((response) => {
+        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
+        console.log("[catalog] publish.years.load:success", { count: options.length });
+        setYears(options);
+      })
+      .catch((err) => {
+        console.log("[catalog] publish.years.load:error", err);
+        setError("Unable to load catalog options.");
+      });
+
+    api.get<ItemTypesResponse>("/catalog/item-types")
+      .then((response) => {
+        console.log("[catalog] publish.itemTypes.load:success", { count: response.data.options.length });
+        setCatalogItemTypes(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
+      })
+      .catch((err) => {
+        console.log("[catalog] publish.itemTypes.load:error", err);
+        setError("Unable to load catalog options.");
+      });
+  }, [api, token]);
+
+  useEffect(() => {
+    if (!form.brandId) {
+      setModels([]);
+      return;
+    }
+
+    console.log("[catalog] publish.models.load:start", { brandId: form.brandId });
+    api.get<ModelsResponse>("/catalog/models", { brandId: form.brandId })
+      .then((response) => {
+        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
+        console.log("[catalog] publish.models.load:success", { brandId: form.brandId, count: options.length });
+        setModels(options);
+      })
+      .catch((err) => {
+        console.log("[catalog] publish.models.load:error", err);
+        setModels([]);
+        setError("Unable to load catalog options.");
+      });
+  }, [api, form.brandId]);
 
   useEffect(() => {
     if (!form.itemTypeId) {
@@ -67,17 +191,17 @@ export function PublishPage() {
     }
 
     api.get<PartsResponse>("/catalog/parts", { itemTypeId: form.itemTypeId })
-      .then((response) => setPartOptions(response.data.options.map((opt) => ({ id: opt.id, label: opt.label }))))
-      .catch(() => setPartOptions([]));
+      .then((response) => {
+        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
+        console.log("[catalog] publish.parts.load:success", { itemTypeId: form.itemTypeId, count: options.length });
+        setPartOptions(options);
+      })
+      .catch((err) => {
+        console.log("[catalog] publish.parts.load:error", err);
+        setPartOptions([]);
+      });
   }, [api, form.itemTypeId]);
-
-  const brands = useMemo(() => extractBrandOptions(catalogRows), [catalogRows]);
-  const models = useMemo(() => extractModelOptions(catalogRows, form.brandId), [catalogRows, form.brandId]);
-  const years = useMemo(() => extractYearOptions(catalogRows, form.brandId, form.modelId), [catalogRows, form.brandId, form.modelId]);
-  const itemTypes = useMemo(
-    () => extractItemTypeOptions(catalogRows, form.brandId, form.modelId, form.yearId),
-    [catalogRows, form.brandId, form.modelId, form.yearId]
-  );
+  const itemTypes = useMemo(() => catalogItemTypes, [catalogItemTypes]);
 
   function update(field: keyof typeof initialState, value: string) {
     setForm((current) => {
@@ -116,7 +240,15 @@ export function PublishPage() {
         price: {
           amount: Number(form.priceAmount),
           type: "fixed"
-        }
+        },
+        ...(form.locationDepartment && form.locationMunicipality
+          ? {
+            location: {
+              department: form.locationDepartment,
+              municipality: form.locationMunicipality
+            }
+          }
+          : {})
       };
 
       debugLog("publish.request", {
@@ -197,7 +329,7 @@ export function PublishPage() {
             onChange={(value) => update("partId", value)}
           />
 
-          <PriceInput amount={form.priceAmount} onAmountChange={(value) => update("priceAmount", value)} priceType={form.priceType} />
+          <PriceInput amount={form.priceAmount} onAmountChange={(value) => update("priceAmount", value)} />
 
           <button type="submit" disabled={loading}>
             {loading ? "Publishing..." : "Publish"}

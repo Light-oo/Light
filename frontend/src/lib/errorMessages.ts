@@ -7,8 +7,10 @@ const messages: Record<string, string> = {
   not_found: "Resource not found.",
   insufficient_tokens: "Not enough tokens.",
   listing_not_active: "Listing no longer available.",
+  CANNOT_REVEAL_OWN_LISTING: "Esta parte es la que usted está tratando de vender.",
   listing_has_no_contact: "Listing has no contact available.",
   duplicate_listing: "You already have an active listing for this same signature.",
+  OFFER_ALREADY_EXISTS: "You already have an active offer for this item. Please edit your active listing.",
   unexpected_error: "Unexpected error. Please try again."
 };
 

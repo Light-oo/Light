@@ -62,6 +62,20 @@ body {
   padding: 1rem;
 }
 
+.auth-form {
+  width: min(360px, 100%);
+}
+
+.landing-card {
+  width: min(360px, 100%);
+  text-align: center;
+}
+
+.landing-title {
+  margin: 0;
+  letter-spacing: 0.08em;
+}
+
 .card {
   background: var(--bg);
   border: 1px solid var(--line);

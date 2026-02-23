@@ -99,10 +99,20 @@ export type MyListingRow = {
     item_type_id: string;
     part_id: string;
   } | null;
+  listing_locations:
+    | {
+      department: string;
+      municipality: string;
+    }
+    | Array<{
+      department: string;
+      municipality: string;
+    }>
+    | null;
 };
 
 export async function fetchMyListings(accessToken: string, userId: string): Promise<MyListingRow[]> {
-  const select = "id,status,created_at,pricing(price_amount,price_type,currency),item_specs(brand_id,model_id,year_id,item_type_id,part_id)";
+  const select = "id,status,created_at,pricing(price_amount,price_type,currency),item_specs(brand_id,model_id,year_id,item_type_id,part_id),listing_locations(department,municipality)";
   return supabaseGet<MyListingRow[]>(
     `listings?select=${encodeURIComponent(select)}&seller_profile_id=eq.${userId}&listing_type=eq.sell&order=created_at.desc&limit=200`,
     accessToken

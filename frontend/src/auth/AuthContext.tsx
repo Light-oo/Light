@@ -12,6 +12,7 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, confirmPassword: string) => Promise<void>;
   signOut: () => void;
   api: ReturnType<typeof createApiClient>;
   isGlobalLoading: boolean;
@@ -97,6 +98,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await establishSession(token, email.trim());
   }, [establishSession]);
 
+  const signUp = useCallback(async (email: string, password: string, confirmPassword: string) => {
+    const response = await api.post<{ ok: true; data: { access_token: string } }>("/auth/signup", {
+      email: email.trim(),
+      password,
+      confirm_password: confirmPassword
+    });
+
+    await establishSession(response.data.access_token, email.trim());
+  }, [api, establishSession]);
+
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) {
@@ -112,10 +123,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AuthContextValue>(() => ({
     ...state,
     signIn,
+    signUp,
     signOut,
     api,
     isGlobalLoading: pendingRequests > 0
-  }), [state, signIn, signOut, api, pendingRequests]);
+  }), [state, signIn, signUp, signOut, api, pendingRequests]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

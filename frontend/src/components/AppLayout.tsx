@@ -22,7 +22,7 @@ export function AppLayout() {
           title={isSellActive ? "Switch to BUY" : "Switch to SELL"}
         >
           <span className="active-word">{activeModeLabel}</span>
-          <span className="mode-chevron" aria-hidden="true">↔</span>
+          <span className="mode-chevron" aria-hidden="true">SWITCH</span>
         </button>
 
         <button
@@ -45,3 +45,4 @@ export function AppLayout() {
     </div>
   );
 }
+

@@ -45,6 +45,28 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
+  const { data: ownListingRow, error: ownListingCheckError } = await supabase
+    .from("listings")
+    .select("id")
+    .eq("id", listingId)
+    .eq("seller_profile_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (ownListingCheckError) {
+    console.error("supabase_error", {
+      code: ownListingCheckError.code,
+      message: ownListingCheckError.message,
+      details: (ownListingCheckError as any)?.details,
+      hint: (ownListingCheckError as any)?.hint
+    });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  if (ownListingRow) {
+    return res.status(403).json({ ok: false, error: "CANNOT_REVEAL_OWN_LISTING" });
+  }
+
   // Pilot invariant: only active SELL listings are revealable.
   const { data: activeCard, error: activeCardError } = await supabase
     .from("market_sell_cards_view")

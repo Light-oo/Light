@@ -5,14 +5,7 @@ import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
-import {
-  extractBrandOptions,
-  extractItemTypeOptions,
-  extractModelOptions,
-  extractYearOptions,
-  type Option
-} from "../lib/marketOptions";
-import { fetchMarketOptions, type MarketOptionRow } from "../lib/supabaseData";
+import { type Option } from "../lib/marketOptions";
 
 type BuyCard = {
   cardType: "sell";
@@ -34,6 +27,9 @@ type SearchResponse = {
   page: number;
   pageSize: number;
   total: number;
+  data?: {
+    reason?: string;
+  };
 };
 
 type RevealResponse = {
@@ -48,7 +44,36 @@ type RevealResponse = {
 type PartsResponse = {
   ok: true;
   data: {
-    options: Array<{ id: string; label: string }>;
+    options: Array<{ id: string; key: string; label_es: string }>;
+  };
+};
+
+type BrandsResponse = {
+  ok: true;
+  data: {
+    options: Array<{ id: string; key: string; label_es: string }>;
+  };
+};
+
+type ModelsResponse = {
+  ok: true;
+  data: {
+    brand_id: string;
+    options: Array<{ id: string; key: string; label_es: string }>;
+  };
+};
+
+type YearsResponse = {
+  ok: true;
+  data: {
+    options: Array<{ id: string; key?: string | null; label_es: string; year?: number | null }>;
+  };
+};
+
+type ItemTypesResponse = {
+  ok: true;
+  data: {
+    options: Array<{ id: string; key: string; label_es: string }>;
   };
 };
 
@@ -94,7 +119,10 @@ function parseStoredState() {
 
 export function BuySearchPage() {
   const { api, token } = useAuth();
-  const [marketRows, setMarketRows] = useState<MarketOptionRow[]>([]);
+  const [brandOptions, setBrandOptions] = useState<Option[]>([]);
+  const [modelOptions, setModelOptions] = useState<Option[]>([]);
+  const [yearOptions, setYearOptions] = useState<Option[]>([]);
+  const [catalogItemTypes, setCatalogItemTypes] = useState<Option[]>([]);
   const [form, setForm] = useState(initialForm);
   const [partOptions, setPartOptions] = useState<Option[]>([]);
   const [searched, setSearched] = useState(false);
@@ -147,10 +175,62 @@ export function BuySearchPage() {
       return;
     }
 
-    fetchMarketOptions(token)
-      .then(setMarketRows)
-      .catch((err) => setError(toUiErrorMessage(err)));
-  }, [token]);
+    console.log("[catalog] buy.brands.load:start");
+    api.get<BrandsResponse>("/catalog/brands")
+      .then((response) => {
+        const options = response.data.options.map((option) => ({ id: option.id, label: option.label_es }));
+        console.log("[catalog] buy.brands.load:success", { count: options.length });
+        setBrandOptions(options);
+      })
+      .catch((err) => {
+        console.log("[catalog] buy.brands.load:error", err);
+        setError(toUiErrorMessage(err));
+      });
+
+    console.log("[catalog] buy.years.load:start");
+    api.get<YearsResponse>("/catalog/years")
+      .then((response) => {
+        const options = response.data.options.map((option) => ({ id: option.id, label: option.label_es }));
+        console.log("[catalog] buy.years.load:success", { count: options.length });
+        setYearOptions(options);
+      })
+      .catch((err) => {
+        console.log("[catalog] buy.years.load:error", err);
+        setError(toUiErrorMessage(err));
+      });
+
+    api.get<ItemTypesResponse>("/catalog/item-types")
+      .then((response) => {
+        console.log("[catalog] buy.itemTypes.load:success", { count: response.data.options.length });
+        setCatalogItemTypes(
+          response.data.options.map((option) => ({ id: option.id, label: option.label_es }))
+        );
+      })
+      .catch((err) => {
+        console.log("[catalog] buy.itemTypes.load:error", err);
+        setError(toUiErrorMessage(err));
+      });
+  }, [api, token]);
+
+  useEffect(() => {
+    if (!form.brandId) {
+      setModelOptions([]);
+      return;
+    }
+
+    console.log("[catalog] buy.models.load:start", { brandId: form.brandId });
+    api.get<ModelsResponse>("/catalog/models", { brandId: form.brandId })
+      .then((response) => {
+        const options = response.data.options.map((option) => ({ id: option.id, label: option.label_es }));
+        console.log("[catalog] buy.models.load:success", { brandId: form.brandId, count: options.length });
+        setModelOptions(options);
+      })
+      .catch((err) => {
+        console.log("[catalog] buy.models.load:error", err);
+        setModelOptions([]);
+        setError(toUiErrorMessage(err));
+      });
+  }, [api, form.brandId]);
 
   useEffect(() => {
     if (!form.itemTypeId) {
@@ -160,9 +240,12 @@ export function BuySearchPage() {
 
     api.get<PartsResponse>("/catalog/parts", { itemTypeId: form.itemTypeId })
       .then((response) => {
-        setPartOptions(response.data.options.map((option) => ({ id: option.id, label: option.label })));
+        const options = response.data.options.map((option) => ({ id: option.id, label: option.label_es }));
+        console.log("[catalog] buy.parts.load:success", { itemTypeId: form.itemTypeId, count: options.length });
+        setPartOptions(options);
       })
       .catch(() => {
+        console.log("[catalog] buy.parts.load:error", { itemTypeId: form.itemTypeId });
         setPartOptions([]);
       });
   }, [api, form.itemTypeId]);
@@ -209,7 +292,11 @@ export function BuySearchPage() {
         setTotal(response.total);
 
         if (response.results.length === 0) {
-          setMessage("No results. Demand was registered for this signature.");
+          if (response.data?.reason === "ONLY_OWN_LISTINGS") {
+            setMessage("No results because you already have an active offer for this item.");
+          } else {
+            setMessage("No results. Demand was registered for this signature.");
+          }
         }
       })
       .catch((apiError) => {
@@ -222,16 +309,7 @@ export function BuySearchPage() {
       .finally(() => setLoading(false));
   }, [api, page, searchRequest, pageSize]);
 
-  const brandOptions = useMemo(() => extractBrandOptions(marketRows), [marketRows]);
-  const modelOptions = useMemo(() => extractModelOptions(marketRows, form.brandId), [marketRows, form.brandId]);
-  const yearOptions = useMemo(
-    () => extractYearOptions(marketRows, form.brandId, form.modelId),
-    [marketRows, form.brandId, form.modelId]
-  );
-  const itemTypeOptions = useMemo(
-    () => extractItemTypeOptions(marketRows, form.brandId, form.modelId, form.yearId),
-    [marketRows, form.brandId, form.modelId, form.yearId]
-  );
+  const itemTypeOptions = useMemo(() => catalogItemTypes, [catalogItemTypes]);
 
   function updateField(field: keyof typeof initialForm, value: string) {
     setForm((current) => {
