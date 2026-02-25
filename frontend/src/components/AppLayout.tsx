@@ -1,29 +1,32 @@
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import logoLoader from "../assets/logo-loader.svg";
 
 export function AppLayout() {
-  const { isGlobalLoading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const isSellActive =
     location.pathname.startsWith("/publish") || location.pathname.startsWith("/sell-demands");
-  const activeModeLabel = isSellActive ? "SELL" : "BUY";
+  const isAccountScreen = location.pathname.startsWith("/account");
+  const activeModeLabel = isSellActive ? "Vendo" : "Busco";
 
   return (
     <div className="mobile-shell">
       <header className="topbar">
-        <button type="button" className="logo-mark" onClick={() => navigate("/search")}>
-          LIGHT
-        </button>
+        {isAccountScreen ? (
+          <div className="header-mode-placeholder" aria-hidden="true" />
+        ) : (
+          <button
+            type="button"
+            className="header-mode-toggle"
+            onClick={() => navigate(isSellActive ? "/search" : "/publish")}
+            title={isSellActive ? "Ir a Busco" : "Ir a Vendo"}
+          >
+            <span className="active-word">{activeModeLabel}</span>
+          </button>
+        )}
 
-        <button
-          type="button"
-          className="header-mode-toggle"
-          onClick={() => navigate(isSellActive ? "/search" : "/publish")}
-          title={isSellActive ? "Switch to BUY" : "Switch to SELL"}
-        >
-          <span className="active-word">{activeModeLabel}</span>
-          <span className="mode-chevron" aria-hidden="true">SWITCH</span>
+        <button type="button" className="logo-mark" onClick={() => navigate("/search")} aria-label="Ir a inicio">
+          <img src={logoLoader} alt="Light" className="header-logo-icon" />
         </button>
 
         <button
@@ -38,7 +41,6 @@ export function AppLayout() {
           </svg>
         </button>
       </header>
-      {isGlobalLoading ? <div className="global-loading" aria-label="Loading" /> : null}
 
       <main className="content">
         <Outlet />

@@ -57,9 +57,12 @@ export function createApiClient(config: ApiClientConfig) {
       query?: Record<string, string | number | undefined>;
       body?: unknown;
       auth?: boolean;
+      suppressGlobalLoader?: boolean;
     }
   ): Promise<T> {
-    config.onRequestStart?.();
+    if (!options?.suppressGlobalLoader) {
+      config.onRequestStart?.();
+    }
     const headers: Record<string, string> = {
       "Content-Type": "application/json"
     };
@@ -89,14 +92,28 @@ export function createApiClient(config: ApiClientConfig) {
 
       return (payload ?? {}) as T;
     } finally {
-      config.onRequestEnd?.();
+      if (!options?.suppressGlobalLoader) {
+        config.onRequestEnd?.();
+      }
     }
   }
 
   return {
-    get: <T>(path: string, query?: Record<string, string | number | undefined>) =>
-      request<T>("GET", path, { query }),
-    post: <T>(path: string, body?: unknown) => request<T>("POST", path, { body }),
-    patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, { body })
+    get: <T>(
+      path: string,
+      query?: Record<string, string | number | undefined>,
+      requestOptions?: { suppressGlobalLoader?: boolean; auth?: boolean }
+    ) =>
+      request<T>("GET", path, { query, ...requestOptions }),
+    post: <T>(
+      path: string,
+      body?: unknown,
+      requestOptions?: { suppressGlobalLoader?: boolean; auth?: boolean }
+    ) => request<T>("POST", path, { body, ...requestOptions }),
+    patch: <T>(
+      path: string,
+      body?: unknown,
+      requestOptions?: { suppressGlobalLoader?: boolean; auth?: boolean }
+    ) => request<T>("PATCH", path, { body, ...requestOptions })
   };
 }

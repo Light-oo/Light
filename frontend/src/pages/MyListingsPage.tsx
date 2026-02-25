@@ -72,10 +72,13 @@ function ListingGroup({
         const specs = row.item_specs;
         const price = resolvePrice(row, activePriceMap);
         const location = resolveLocation(row);
+        const signatureLabel = specs
+          ? `${labelForId(marketRows, "brand", specs.brand_id)} / ${labelForId(marketRows, "model", specs.model_id)} / ${labelForId(marketRows, "year", specs.year_id)} / ${labelForId(marketRows, "itemType", specs.item_type_id)} / ${labelForId(marketRows, "part", specs.part_id)}`
+          : "No item_specs";
         return (
           <article key={row.id} className="card stack listing-row">
             <div className="row-between">
-              <strong>{row.id}</strong>
+              <strong>{specs ? `${labelForId(marketRows, "brand", specs.brand_id)} ${labelForId(marketRows, "model", specs.model_id)}` : "Pieza"}</strong>
               <span className={row.status === "active" ? "status status-active" : "status status-inactive"}>
                 {row.status}
               </span>
@@ -83,9 +86,7 @@ function ListingGroup({
             <p><strong>Created:</strong> {new Date(row.created_at).toLocaleString()}</p>
             <p>
               <strong>Signature:</strong>{" "}
-              {specs
-                ? `${labelForId(marketRows, "brand", specs.brand_id)} / ${labelForId(marketRows, "model", specs.model_id)} / ${labelForId(marketRows, "year", specs.year_id)} / ${labelForId(marketRows, "itemType", specs.item_type_id)} / ${labelForId(marketRows, "part", specs.part_id)}`
-                : "No item_specs"}
+              {signatureLabel}
             </p>
             <p><strong>Price:</strong> {price ? `${price.amount} ${price.currency}` : "Not available"}</p>
             {location ? <p><strong>Location:</strong> {location.department}, {location.municipality}</p> : null}
@@ -206,7 +207,6 @@ export function MyListingsPage() {
         <button type="button" onClick={load} disabled={loading} className="ghost">Refresh</button>
       </Card>
 
-      {loading ? <p>Loading...</p> : null}
       {error ? <p className="error">{error}</p> : null}
 
       <ListingGroup

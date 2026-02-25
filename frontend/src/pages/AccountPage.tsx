@@ -4,7 +4,6 @@ import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../lib/apiClient";
 import { WhatsappSvInput } from "../components/WhatsappSvInput";
 import { toUiErrorMessage } from "../lib/errorMessages";
-import { Card } from "../components/Card";
 
 type ProfileStatusResponse = {
   ok: true;
@@ -25,6 +24,8 @@ export function AccountPage() {
   const [savingWhatsapp, setSavingWhatsapp] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isEditingWhatsapp, setIsEditingWhatsapp] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const whatsappInlineError =
     whatsappLocal.length === 0 || whatsappLocal.length === 8
@@ -46,6 +47,7 @@ export function AccountPage() {
     const response = await api.get<ProfileStatusResponse>("/profile/status");
     setProfile(response.data);
     setWhatsappLocal(toLocalWhatsappNumber(response.data.whatsappE164 ?? null));
+    setIsEditingWhatsapp(false);
   }
 
   useEffect(() => {
@@ -70,7 +72,8 @@ export function AccountPage() {
         whatsapp: nextValue
       });
       await loadProfileStatus();
-      setSaveMessage("WhatsApp updated.");
+      setSaveMessage("WhatsApp actualizado.");
+      setMenuOpen(false);
     } catch (err) {
       if (err instanceof ApiError) {
         setError(toUiErrorMessage(err));
@@ -83,35 +86,84 @@ export function AccountPage() {
   }
 
   return (
-    <div className="screen stack gap-lg">
-      <Card title="Account" className="stack">
+    <div className="screen screen-fill stack gap-lg">
+      <div className="stack gap-lg">
+        <h2 className="page-title">Cuenta</h2>
         {error ? <p className="error">{error}</p> : null}
         {saveMessage ? <p className="success">{saveMessage}</p> : null}
-        <p><strong>Email:</strong> {email ?? "-"}</p>
+        <p><strong>Correo:</strong> {email ?? "-"}</p>
         <WhatsappSvInput
           label="WhatsApp"
           localNumber={whatsappLocal}
           onChangeLocalNumber={setWhatsappLocal}
-          errorText={whatsappInlineError}
+          readOnly={!isEditingWhatsapp}
+          disabled={savingWhatsapp}
+          errorText={isEditingWhatsapp ? whatsappInlineError : null}
+          actions={
+            <div className="whatsapp-menu-shell">
+              <button
+                type="button"
+                className="icon-action-button"
+                aria-label="Opciones de WhatsApp"
+                title="Opciones de WhatsApp"
+                disabled={savingWhatsapp}
+                onClick={() => setMenuOpen((current) => !current)}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="6" cy="12" r="1.5" />
+                  <circle cx="12" cy="12" r="1.5" />
+                  <circle cx="18" cy="12" r="1.5" />
+                </svg>
+              </button>
+              {menuOpen ? (
+                <div className="whatsapp-menu-popover">
+                  <button
+                    type="button"
+                    className="ghost whatsapp-menu-item"
+                    disabled={savingWhatsapp}
+                    onClick={() => {
+                      setSaveMessage(null);
+                      setError(null);
+                      setIsEditingWhatsapp(true);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    Editar
+                  </button>
+                  {isEditingWhatsapp ? (
+                    <button
+                      type="button"
+                      className="ghost whatsapp-menu-item"
+                      disabled={!canSaveWhatsapp}
+                      onClick={() => saveWhatsapp(`+503${whatsappLocal}`)}
+                    >
+                      Guardar
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="ghost whatsapp-menu-item"
+                    disabled={savingWhatsapp}
+                    onClick={() => saveWhatsapp(null)}
+                  >
+                    Borrar
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          }
         />
-        <div className="row-between">
-          <button type="button" disabled={!canSaveWhatsapp} onClick={() => saveWhatsapp(`+503${whatsappLocal}`)}>
-            {savingWhatsapp ? "Saving..." : "Save WhatsApp"}
-          </button>
-          <button type="button" className="ghost" disabled={savingWhatsapp} onClick={() => saveWhatsapp(null)}>
-            Remove WhatsApp
-          </button>
-        </div>
-        <p><strong>Role:</strong> {profile?.role ?? "-"}</p>
         <p><strong>Tokens:</strong> {profile?.tokens ?? "-"}</p>
+      </div>
 
+      <div className="stack account-bottom-actions">
         <button type="button" className="ghost" onClick={() => navigate("/my-listings")}>
-          My Listings
+          Mis listas
         </button>
         <button type="button" onClick={signOut}>
-          Sign out
+          Cerrar sesión
         </button>
-      </Card>
+      </div>
     </div>
   );
 }

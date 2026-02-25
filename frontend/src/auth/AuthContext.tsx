@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createApiClient } from "../lib/apiClient";
 import { config } from "../lib/config";
 import { signInWithPassword } from "../lib/supabaseAuth";
+import { useLoading } from "../context/LoadingContext";
 
 type AuthState = {
   ready: boolean;
@@ -55,8 +56,8 @@ function parseEmailFromJwt(token: string): string | null {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ ready: false, token: null, userId: null, email: null });
-  const [pendingRequests, setPendingRequests] = useState(0);
   const tokenRef = useRef<string | null>(null);
+  const { isLoading, setLoading } = useLoading();
 
   const signOut = useCallback(() => {
     tokenRef.current = null;
@@ -70,43 +71,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         baseUrl: config.apiBaseUrl,
         getToken: () => tokenRef.current,
         onUnauthorized: signOut,
-        onRequestStart: () => setPendingRequests((count) => count + 1),
-        onRequestEnd: () => setPendingRequests((count) => Math.max(0, count - 1))
+        onRequestStart: () => setLoading(true),
+        onRequestEnd: () => setLoading(false)
       }),
-    [signOut]
+    [setLoading, signOut]
   );
 
   const establishSession = useCallback(async (token: string, emailHint?: string) => {
-    const userId = await validateToken(config.apiBaseUrl, token);
-    if (!userId) {
-      signOut();
-      throw new Error("unauthorized");
-    }
+    setLoading(true);
+    try {
+      const userId = await validateToken(config.apiBaseUrl, token);
+      if (!userId) {
+        signOut();
+        throw new Error("unauthorized");
+      }
 
-    tokenRef.current = token;
-    localStorage.setItem(STORAGE_KEY, token);
-    setState({
-      ready: true,
-      token,
-      userId,
-      email: emailHint ?? parseEmailFromJwt(token)
-    });
-  }, [signOut]);
+      tokenRef.current = token;
+      localStorage.setItem(STORAGE_KEY, token);
+      setState({
+        ready: true,
+        token,
+        userId,
+        email: emailHint ?? parseEmailFromJwt(token)
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [setLoading, signOut]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const token = await signInWithPassword(email, password);
-    await establishSession(token, email.trim());
-  }, [establishSession]);
+    setLoading(true);
+    try {
+      const token = await signInWithPassword(email, password);
+      await establishSession(token, email.trim());
+    } finally {
+      setLoading(false);
+    }
+  }, [establishSession, setLoading]);
 
   const signUp = useCallback(async (email: string, password: string, confirmPassword: string, whatsapp: string) => {
-    const response = await api.post<{ ok: true; data: { access_token: string } }>("/auth/signup", {
-      email: email.trim(),
-      password,
-      confirm_password: confirmPassword,
-      whatsapp
-    });
+    setLoading(true);
+    try {
+      const response = await api.post<{ ok: true; data: { access_token: string } }>("/auth/signup", {
+        email: email.trim(),
+        password,
+        confirm_password: confirmPassword,
+        whatsapp
+      });
 
-    await establishSession(response.data.access_token, email.trim());
+      await establishSession(response.data.access_token, email.trim());
+    } finally {
+      setLoading(false);
+    }
   }, [api, establishSession]);
 
   useEffect(() => {
@@ -127,8 +143,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signUp,
     signOut,
     api,
-    isGlobalLoading: pendingRequests > 0
-  }), [state, signIn, signUp, signOut, api, pendingRequests]);
+    isGlobalLoading: isLoading
+  }), [state, signIn, signUp, signOut, api, isLoading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

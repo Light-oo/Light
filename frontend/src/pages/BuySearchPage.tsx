@@ -374,7 +374,7 @@ export function BuySearchPage() {
     debugLog("reveal.request", { listingId });
 
     try {
-      const response = await api.post<RevealResponse>("/contact-access", { listingId });
+      const response = await api.post<RevealResponse>("/contact-access", { listingId }, { suppressGlobalLoader: true });
       debugLog("reveal.success", {
         listingId,
         didConsume: response.data.didConsume
@@ -405,12 +405,10 @@ export function BuySearchPage() {
 
   return (
     <div className="screen stack gap-lg">
-      <h2 className="page-title">Search</h2>
-
       <Card className="stack">
         <form onSubmit={onSearch} className="stack">
           <FilterSelect
-            label="Brand"
+            label="Marca"
             value={form.brandId}
             options={brandOptions}
             required
@@ -418,7 +416,7 @@ export function BuySearchPage() {
           />
 
           <FilterSelect
-            label="Model"
+            label="Modelo"
             value={form.modelId}
             options={modelOptions}
             required
@@ -427,7 +425,7 @@ export function BuySearchPage() {
           />
 
           <FilterSelect
-            label="Year"
+            label="Año"
             value={form.yearId}
             options={yearOptions}
             required
@@ -436,7 +434,7 @@ export function BuySearchPage() {
           />
 
           <FilterSelect
-            label="Item Type"
+            label="Sistema"
             value={form.itemTypeId}
             options={itemTypeOptions}
             required
@@ -445,7 +443,7 @@ export function BuySearchPage() {
           />
 
           <FilterSelect
-            label="Part"
+            label="Pieza"
             value={form.partId}
             options={partOptions}
             required
@@ -454,25 +452,19 @@ export function BuySearchPage() {
           />
 
           <label>
-            Detail (optional)
+            Detalle (opcional)
             <input
               type="text"
               value={form.detailsText}
               onChange={(event) => updateField("detailsText", event.target.value)}
-              placeholder="Any specific note"
+              placeholder=""
             />
           </label>
-
-          <button type="submit" disabled={loading || isSearchQueued}>
-            {loading || isSearchQueued ? "Searching..." : "Search"}
-          </button>
         </form>
       </Card>
 
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
-      {loading ? <p>Loading results...</p> : null}
-
       {searched && !loading && results.length === 0 ? (
         <Card>
           <p>No results.</p>
@@ -496,7 +488,6 @@ export function BuySearchPage() {
             <RevealButton
               loading={reveal?.loading}
               whatsappUrl={reveal?.whatsappUrl}
-              didConsume={reveal?.didConsume}
               error={reveal?.error}
               onReveal={() => onReveal(card.listingId)}
             />

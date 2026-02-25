@@ -70,9 +70,13 @@ export function SellDemandsPage() {
   const { api, token, userId } = useAuth();
   const [brandOptions, setBrandOptions] = useState<Option[]>([]);
   const [modelOptions, setModelOptions] = useState<Option[]>([]);
+  const [modelLabelById, setModelLabelById] = useState<Record<string, string>>({});
+  const [loadedModelBrandIds, setLoadedModelBrandIds] = useState<Record<string, true>>({});
   const [yearOptions, setYearOptions] = useState<Option[]>([]);
   const [itemTypeOptions, setItemTypeOptions] = useState<Option[]>([]);
   const [partOptions, setPartOptions] = useState<Option[]>([]);
+  const [partLabelById, setPartLabelById] = useState<Record<string, string>>({});
+  const [loadedPartItemTypeIds, setLoadedPartItemTypeIds] = useState<Record<string, true>>({});
   const [form, setForm] = useState(initialForm);
   const [searchRequest, setSearchRequest] = useState<typeof initialForm | null>(null);
   const [searched, setSearched] = useState(false);
@@ -83,6 +87,8 @@ export function SellDemandsPage() {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
+  const [collapseAfterSearch, setCollapseAfterSearch] = useState(false);
   const [revealState, setRevealState] = useState<
     Record<string, { loading: boolean; whatsappUrl?: string; didConsume?: boolean; error?: string }>
   >({});
@@ -118,7 +124,16 @@ export function SellDemandsPage() {
     }
     api.get<ModelsResponse>("/catalog/models", { brandId: form.brandId })
       .then((response) => {
-        setModelOptions(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
+        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
+        setModelOptions(options);
+        setModelLabelById((current) => {
+          const next = { ...current };
+          for (const opt of options) {
+            next[opt.id] = opt.label;
+          }
+          return next;
+        });
+        setLoadedModelBrandIds((current) => ({ ...current, [form.brandId]: true }));
       })
       .catch((err) => {
         setModelOptions([]);
@@ -127,19 +142,128 @@ export function SellDemandsPage() {
   }, [api, form.brandId]);
 
   useEffect(() => {
+    const missingBrandIds = Array.from(
+      new Set(
+        results
+          .map((card) => card.what.brandId)
+          .filter((brandId) => Boolean(brandId) && !loadedModelBrandIds[brandId])
+      )
+    );
+
+    if (missingBrandIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    Promise.all(
+      missingBrandIds.map((brandId) =>
+        api.get<ModelsResponse>("/catalog/models", { brandId })
+          .then((response) => ({ brandId, options: response.data.options }))
+          .catch(() => ({ brandId, options: [] as Array<{ id: string; label_es: string }> }))
+      )
+    ).then((responses) => {
+      if (cancelled) {
+        return;
+      }
+
+      setModelLabelById((current) => {
+        const next = { ...current };
+        for (const response of responses) {
+          for (const opt of response.options) {
+            next[opt.id] = opt.label_es;
+          }
+        }
+        return next;
+      });
+
+      setLoadedModelBrandIds((current) => {
+        const next = { ...current };
+        for (const response of responses) {
+          next[response.brandId] = true;
+        }
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, loadedModelBrandIds, results]);
+
+  useEffect(() => {
     if (!form.itemTypeId) {
       setPartOptions([]);
       return;
     }
     api.get<OptionResponse>("/catalog/parts", { itemTypeId: form.itemTypeId })
       .then((response) => {
-        setPartOptions(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
+        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
+        setPartOptions(options);
+        setPartLabelById((current) => {
+          const next = { ...current };
+          for (const opt of options) {
+            next[opt.id] = opt.label;
+          }
+          return next;
+        });
+        setLoadedPartItemTypeIds((current) => ({ ...current, [form.itemTypeId]: true }));
       })
       .catch((err) => {
         setPartOptions([]);
         setError(toUiErrorMessage(err));
       });
   }, [api, form.itemTypeId]);
+
+  useEffect(() => {
+    const missingItemTypeIds = Array.from(
+      new Set(
+        results
+          .map((card) => card.what.itemTypeId)
+          .filter((itemTypeId) => Boolean(itemTypeId) && !loadedPartItemTypeIds[itemTypeId])
+      )
+    );
+
+    if (missingItemTypeIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    Promise.all(
+      missingItemTypeIds.map((itemTypeId) =>
+        api.get<OptionResponse>("/catalog/parts", { itemTypeId })
+          .then((response) => ({ itemTypeId, options: response.data.options }))
+          .catch(() => ({ itemTypeId, options: [] as Array<{ id: string; label_es: string }> }))
+      )
+    ).then((responses) => {
+      if (cancelled) {
+        return;
+      }
+
+      setPartLabelById((current) => {
+        const next = { ...current };
+        for (const response of responses) {
+          for (const opt of response.options) {
+            next[opt.id] = opt.label_es;
+          }
+        }
+        return next;
+      });
+
+      setLoadedPartItemTypeIds((current) => {
+        const next = { ...current };
+        for (const response of responses) {
+          next[response.itemTypeId] = true;
+        }
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, loadedPartItemTypeIds, results]);
 
   useEffect(() => {
     if (!searchRequest) {
@@ -163,13 +287,22 @@ export function SellDemandsPage() {
         setResults(response.data.results);
         setPageSize(response.data.pageSize);
         setTotal(response.data.total);
+        if (collapseAfterSearch) {
+          setFiltersExpanded(false);
+          setCollapseAfterSearch(false);
+        }
         if (response.data.results.length === 0) {
           setMessage("No active demand found.");
         }
       })
-      .catch((err) => setError(toUiErrorMessage(err)))
+      .catch((err) => {
+        if (collapseAfterSearch) {
+          setCollapseAfterSearch(false);
+        }
+        setError(toUiErrorMessage(err));
+      })
       .finally(() => setLoading(false));
-  }, [api, page, pageSize, searchRequest]);
+  }, [api, page, pageSize, searchRequest, collapseAfterSearch]);
 
   const labelMaps = useMemo(() => {
     const toMap = (options: Option[]) => new Map(options.map((opt) => [opt.id, opt.label]));
@@ -204,7 +337,49 @@ export function SellDemandsPage() {
     setSearchRequest({ ...form });
   }
 
+  function onHeaderAction() {
+    if (loading) {
+      return;
+    }
+    if (!filtersExpanded) {
+      setFiltersExpanded(true);
+      return;
+    }
+    setSearched(true);
+    setPage(1);
+    setCollapseAfterSearch(true);
+    setSearchRequest({ ...form });
+  }
+
   const canGoNext = page * pageSize < total;
+
+  function formatWhen(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "-";
+    }
+    const diffMs = Date.now() - date.getTime();
+    const minutes = Math.round(diffMs / 60000);
+    if (minutes < 1) {
+      return "Hace un momento";
+    }
+    if (minutes < 60) {
+      return `Hace ${minutes} min`;
+    }
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) {
+      return `Hace ${hours} h`;
+    }
+    const days = Math.round(hours / 24);
+    if (days < 7) {
+      return `Hace ${days} dias`;
+    }
+    return date.toLocaleString();
+  }
+
+  function safeLabel(map: Map<string, string>, id: string, fallback: string) {
+    return map.get(id) ?? fallback;
+  }
 
   async function onReveal(demandId: string) {
     if (revealState[demandId]?.loading || revealState[demandId]?.whatsappUrl) {
@@ -214,7 +389,7 @@ export function SellDemandsPage() {
     setRevealState((current) => ({ ...current, [demandId]: { loading: true } }));
 
     try {
-      const response = await api.post<DemandRevealResponse>("/contact-access", { demandId });
+      const response = await api.post<DemandRevealResponse>("/contact-access", { demandId }, { suppressGlobalLoader: true });
       setRevealState((current) => ({
         ...current,
         [demandId]: {
@@ -236,62 +411,70 @@ export function SellDemandsPage() {
 
   return (
     <div className="screen stack gap-lg">
-      <h2 className="page-title">Search Demands</h2>
+      {!filtersExpanded ? (
+        <button
+          type="button"
+          className="ghost demand-refine-button"
+          onClick={onHeaderAction}
+          disabled={loading}
+        >
+          Refinar búsqueda
+        </button>
+      ) : null}
 
-      <Card className="stack">
-        <form onSubmit={onSearch} className="stack">
+      <div className={`collapsible-panel${filtersExpanded ? "" : " is-collapsed"}`}>
+        <Card className="stack">
+          <form onSubmit={onSearch} className="stack">
           <FilterSelect
-            label="Brand"
+            label="Marca"
             value={form.brandId}
             options={brandOptions}
             onChange={(value) => updateField("brandId", value)}
-            placeholder="All"
+            placeholder="Selecciona"
           />
 
           <FilterSelect
-            label="Model"
+            label="Modelo"
             value={form.modelId}
             options={modelOptions}
             onChange={(value) => updateField("modelId", value)}
             disabled={!form.brandId}
-            placeholder="All"
+            placeholder="Selecciona"
           />
 
           <FilterSelect
-            label="Year"
+            label="Año"
             value={form.yearId}
             options={yearOptions}
             onChange={(value) => updateField("yearId", value)}
-            placeholder="All"
+            placeholder="Selecciona"
           />
 
           <FilterSelect
-            label="Item Type"
+            label="Sistema"
             value={form.itemTypeId}
             options={itemTypeOptions}
             onChange={(value) => updateField("itemTypeId", value)}
-            placeholder="All"
+            placeholder="Selecciona"
           />
 
           <FilterSelect
-            label="Part"
+            label="Pieza"
             value={form.partId}
             options={partOptions}
             onChange={(value) => updateField("partId", value)}
             disabled={!form.itemTypeId}
-            placeholder="All"
+            placeholder="Selecciona"
           />
-
-          <button type="submit" disabled={loading}>
-            {loading ? "Searching..." : "Search Demands"}
+          <button type="button" className="ghost" onClick={onHeaderAction} disabled={loading}>
+            Buscar
           </button>
-        </form>
-      </Card>
+          </form>
+        </Card>
+      </div>
 
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
-      {loading ? <p>Loading demands...</p> : null}
-
       {searched && !loading && results.length === 0 ? (
         <Card>
           <p>No active demand found.</p>
@@ -299,35 +482,20 @@ export function SellDemandsPage() {
       ) : null}
 
       {results.map((card) => (
-        <article key={card.demandId} className="card stack card-elevated">
+        <article key={card.demandId} className="card stack card-elevated demand-card-compact">
           <h3>
-            {labelMaps.brands.get(card.what.brandId) ?? card.what.brandId}
-            {" "}
-            {labelMaps.models.get(card.what.modelId) ?? card.what.modelId}
+            {`${partLabelById[card.what.partId] ?? "—"} PARA ${safeLabel(labelMaps.brands, card.what.brandId, "—")} ${modelLabelById[card.what.modelId] ?? "—"} ${safeLabel(labelMaps.years, card.what.yearId, "—")}`.toUpperCase()}
           </h3>
-          <p>
-            <strong>Part:</strong>{" "}
-            {labelMaps.parts.get(card.what.partId) ?? card.what.partId}
-          </p>
-          <p>
-            <strong>Year:</strong>{" "}
-            {labelMaps.years.get(card.what.yearId) ?? card.what.yearId}
-          </p>
-          <p>
-            <strong>System:</strong>{" "}
-            {labelMaps.itemTypes.get(card.what.itemTypeId) ?? card.what.itemTypeId}
-          </p>
           {card.request.detailsText ? (
-            <p><strong>Details:</strong> {card.request.detailsText}</p>
+            <p><strong>Detalle:</strong> {card.request.detailsText}</p>
           ) : null}
-          <p><strong>Created:</strong> {new Date(card.audit.createdAt).toLocaleString()}</p>
+          <p><strong>Creado:</strong> {formatWhen(card.audit.createdAt)}</p>
           {card.audit.requesterUserId === userId ? (
             <p className="info">This is your demand.</p>
           ) : (
             <RevealButton
               loading={revealState[card.demandId]?.loading}
               whatsappUrl={revealState[card.demandId]?.whatsappUrl}
-              didConsume={revealState[card.demandId]?.didConsume}
               error={revealState[card.demandId]?.error}
               onReveal={() => onReveal(card.demandId)}
             />

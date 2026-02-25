@@ -64,7 +64,7 @@ export function LoginPage() {
         {error ? <p className="error">{error}</p> : null}
 
         <button type="submit" disabled={loading}>
-          {loading ? "Signing in..." : "Sign in"}
+          Sign in
         </button>
         <button type="button" className="ghost" onClick={() => navigate("/signup")}>
           New User? Create an Account.

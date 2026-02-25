@@ -17,14 +17,18 @@ export function FilterSelect({
   onChange,
   required = false,
   disabled = false,
-  placeholder = "Select"
+  placeholder = "Selecciona"
 }: FilterSelectProps) {
+  const sortedOptions = [...options].sort((a, b) =>
+    a.label.localeCompare(b.label, "es", { sensitivity: "base", numeric: true })
+  );
+
   return (
     <label>
       {label}
       <select value={value} onChange={(event) => onChange(event.target.value)} required={required} disabled={disabled}>
         <option value="">{placeholder}</option>
-        {options.map((option) => (
+        {sortedOptions.map((option) => (
           <option key={option.id} value={option.id}>
             {option.label}
           </option>

@@ -6,7 +6,7 @@ type PriceInputProps = {
 export function PriceInput({ amount, onAmountChange }: PriceInputProps) {
   return (
     <label>
-      Price Amount
+      Precio
       <input
         required
         type="number"

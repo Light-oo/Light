@@ -116,7 +116,7 @@ export function SignupPage() {
         {googleMessage ? <p className="info">{googleMessage}</p> : null}
 
         <button type="submit" disabled={!canSubmit}>
-          {loading ? "Creating..." : "Create Account"}
+          Create Account
         </button>
         <button type="button" className="ghost" onClick={() => navigate("/")}>
           Cancel

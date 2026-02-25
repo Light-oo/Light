@@ -45,6 +45,11 @@ type ItemTypesResponse = {
   };
 };
 
+type PublishSuccessCard = {
+  title: string;
+  createdAtIso: string;
+};
+
 const initialState = {
   brandId: "",
   modelId: "",
@@ -75,6 +80,7 @@ export function PublishPage() {
   const { api, token } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+
   const [brands, setBrands] = useState<Option[]>([]);
   const [models, setModels] = useState<Option[]>([]);
   const [years, setYears] = useState<Option[]>([]);
@@ -82,8 +88,10 @@ export function PublishPage() {
   const [partOptions, setPartOptions] = useState<Option[]>([]);
   const [form, setForm] = useState(initialState);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [successCard, setSuccessCard] = useState<PublishSuccessCard | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
+
   const prefillAppliedRef = useRef(false);
   const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialState), [form]);
 
@@ -116,7 +124,6 @@ export function PublishPage() {
       if (!isDirty) {
         return;
       }
-
       event.preventDefault();
       event.returnValue = "";
     }
@@ -130,39 +137,23 @@ export function PublishPage() {
       return;
     }
 
-    console.log("[catalog] publish.brands.load:start");
     api.get<BrandsResponse>("/catalog/brands")
       .then((response) => {
-        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
-        console.log("[catalog] publish.brands.load:success", { count: options.length });
-        setBrands(options);
+        setBrands(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
       })
-      .catch((err) => {
-        console.log("[catalog] publish.brands.load:error", err);
-        setError("Unable to load catalog options.");
-      });
+      .catch(() => setError("Unable to load catalog options."));
 
-    console.log("[catalog] publish.years.load:start");
     api.get<YearsResponse>("/catalog/years")
       .then((response) => {
-        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
-        console.log("[catalog] publish.years.load:success", { count: options.length });
-        setYears(options);
+        setYears(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
       })
-      .catch((err) => {
-        console.log("[catalog] publish.years.load:error", err);
-        setError("Unable to load catalog options.");
-      });
+      .catch(() => setError("Unable to load catalog options."));
 
     api.get<ItemTypesResponse>("/catalog/item-types")
       .then((response) => {
-        console.log("[catalog] publish.itemTypes.load:success", { count: response.data.options.length });
         setCatalogItemTypes(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
       })
-      .catch((err) => {
-        console.log("[catalog] publish.itemTypes.load:error", err);
-        setError("Unable to load catalog options.");
-      });
+      .catch(() => setError("Unable to load catalog options."));
   }, [api, token]);
 
   useEffect(() => {
@@ -171,15 +162,11 @@ export function PublishPage() {
       return;
     }
 
-    console.log("[catalog] publish.models.load:start", { brandId: form.brandId });
     api.get<ModelsResponse>("/catalog/models", { brandId: form.brandId })
       .then((response) => {
-        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
-        console.log("[catalog] publish.models.load:success", { brandId: form.brandId, count: options.length });
-        setModels(options);
+        setModels(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
       })
-      .catch((err) => {
-        console.log("[catalog] publish.models.load:error", err);
+      .catch(() => {
         setModels([]);
         setError("Unable to load catalog options.");
       });
@@ -193,16 +180,48 @@ export function PublishPage() {
 
     api.get<PartsResponse>("/catalog/parts", { itemTypeId: form.itemTypeId })
       .then((response) => {
-        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
-        console.log("[catalog] publish.parts.load:success", { itemTypeId: form.itemTypeId, count: options.length });
-        setPartOptions(options);
+        setPartOptions(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
       })
-      .catch((err) => {
-        console.log("[catalog] publish.parts.load:error", err);
+      .catch(() => {
         setPartOptions([]);
       });
   }, [api, form.itemTypeId]);
+
   const itemTypes = useMemo(() => catalogItemTypes, [catalogItemTypes]);
+
+  function labelFor(options: Option[], id: string) {
+    return options.find((opt) => opt.id === id)?.label ?? "";
+  }
+
+  function buildReadableItemName() {
+    const brandLabel = labelFor(brands, form.brandId);
+    const modelLabel = labelFor(models, form.modelId);
+    const yearLabel = labelFor(years, form.yearId);
+    const partLabel = labelFor(partOptions, form.partId);
+    const head = [brandLabel, modelLabel, yearLabel].filter(Boolean).join(" ");
+    return [head, partLabel].filter(Boolean).join(" - ") || "esta pieza";
+  }
+
+  function buildSuccessCardTitle() {
+    const modelLabel = labelFor(models, form.modelId) || "-";
+    const yearLabel = labelFor(years, form.yearId) || "-";
+    const partLabel = labelFor(partOptions, form.partId) || "-";
+    return `${partLabel} PARA ${modelLabel} ${yearLabel}`.toUpperCase();
+  }
+
+  function formatWhen(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+    const diffMs = Date.now() - date.getTime();
+    const minutes = Math.round(diffMs / 60000);
+    if (minutes < 1) return "Hace un momento";
+    if (minutes < 60) return `Hace ${minutes} min`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `Hace ${hours} h`;
+    const days = Math.round(hours / 24);
+    if (days < 7) return `Hace ${days} dias`;
+    return date.toLocaleString();
+  }
 
   function update(field: keyof typeof initialState, value: string) {
     setForm((current) => {
@@ -224,12 +243,12 @@ export function PublishPage() {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (loading) {
-      return;
-    }
+    if (loading) return;
+
     setLoading(true);
     setError(null);
-    setMessage(null);
+    setSuccessCard(null);
+    setDuplicateNotice(null);
 
     try {
       const payload = {
@@ -244,11 +263,11 @@ export function PublishPage() {
         },
         ...(form.locationDepartment && form.locationMunicipality
           ? {
-            location: {
-              department: form.locationDepartment,
-              municipality: form.locationMunicipality
+              location: {
+                department: form.locationDepartment,
+                municipality: form.locationMunicipality
+              }
             }
-          }
           : {})
       };
 
@@ -265,7 +284,11 @@ export function PublishPage() {
 
       const response = await api.post<{ ok: true; data: { listingId: string } }>("/listings", payload);
       debugLog("publish.success", { listingId: response.data.listingId });
-      setMessage(`Listing published: ${response.data.listingId}`);
+
+      setSuccessCard({
+        title: buildSuccessCardTitle(),
+        createdAtIso: new Date().toISOString()
+      });
       setForm(initialState);
       setPartOptions([]);
     } catch (err) {
@@ -273,7 +296,13 @@ export function PublishPage() {
         message: err instanceof Error ? err.message : "unknown"
       });
       if (err instanceof ApiError && err.status === 409) {
-        setError(toUiErrorMessage(err));
+        const code = String(err.payload?.error ?? "");
+        if (code === "OFFER_ALREADY_EXISTS" || code === "duplicate_listing") {
+          setDuplicateNotice(buildReadableItemName());
+          setError(null);
+        } else {
+          setError(toUiErrorMessage(err));
+        }
       } else {
         setError(toUiErrorMessage(err));
       }
@@ -283,17 +312,11 @@ export function PublishPage() {
   }
 
   return (
-    <div className="screen stack gap-lg">
-      <Card title="Publish Listing">
-        <div className="row-between" style={{ marginBottom: "0.6rem" }}>
-          <small>SELL mode</small>
-          <button type="button" className="ghost" onClick={() => navigate("/sell-demands")}>
-            Search Demands
-          </button>
-        </div>
+    <div className="screen screen-fill stack gap-lg">
+      <Card className="stack">
         <form className="stack" onSubmit={onSubmit}>
           <FilterSelect
-            label="Brand"
+            label="Marca"
             required
             value={form.brandId}
             options={brands}
@@ -301,7 +324,7 @@ export function PublishPage() {
           />
 
           <FilterSelect
-            label="Model"
+            label="Modelo"
             required
             disabled={!form.brandId}
             value={form.modelId}
@@ -310,7 +333,7 @@ export function PublishPage() {
           />
 
           <FilterSelect
-            label="Year"
+            label="Año"
             required
             disabled={!form.modelId}
             value={form.yearId}
@@ -319,7 +342,7 @@ export function PublishPage() {
           />
 
           <FilterSelect
-            label="Item Type"
+            label="Sistema"
             required
             disabled={!form.yearId}
             value={form.itemTypeId}
@@ -328,7 +351,7 @@ export function PublishPage() {
           />
 
           <FilterSelect
-            label="Part"
+            label="Pieza"
             required
             disabled={!form.itemTypeId}
             value={form.partId}
@@ -339,13 +362,41 @@ export function PublishPage() {
           <PriceInput amount={form.priceAmount} onAmountChange={(value) => update("priceAmount", value)} />
 
           <button type="submit" disabled={loading}>
-            {loading ? "Publishing..." : "Publish"}
+            Publicar
           </button>
         </form>
       </Card>
 
-      {message ? <p className="success">{message}</p> : null}
+      {successCard ? (
+        <article className="card stack card-elevated demand-card-compact">
+          <h3>{successCard.title}</h3>
+          <p>
+            <strong>Creado:</strong> {formatWhen(successCard.createdAtIso)}
+          </p>
+        </article>
+      ) : null}
+
+      {duplicateNotice ? (
+        <Card className="stack">
+          <p>
+            Ya tienes una publicacion activa equivalente para <strong>{duplicateNotice}</strong>.
+          </p>
+          <p className="info">Puedes administrarla desde Mis publicaciones.</p>
+          <button type="button" className="ghost" onClick={() => navigate("/my-listings")}>
+            Ir a Mis publicaciones
+          </button>
+        </Card>
+      ) : null}
+
       {error ? <p className="error">{error}</p> : null}
+
+      <button
+        type="button"
+        className="ghost publish-bottom-action publish-bottom-button"
+        onClick={() => navigate("/sell-demands")}
+      >
+        Buscar Demandas
+      </button>
     </div>
   );
 }
