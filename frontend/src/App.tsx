@@ -12,6 +12,7 @@ import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { PublishPage } from "./pages/PublishPage";
 import { SellDemandsPage } from "./pages/SellDemandsPage";
 import { SignupPage } from "./pages/SignupPage";
+import { TokenInfoPage } from "./pages/TokenInfoPage";
 
 export function App() {
   const { isLoading } = useLoading();
@@ -35,6 +36,7 @@ export function App() {
             <Route path="/sell-demands" element={<SellDemandsPage />} />
             <Route path="/my-listings" element={<MyListingsPage />} />
             <Route path="/account" element={<AccountPage />} />
+            <Route path="/tokens-info" element={<TokenInfoPage />} />
           </Route>
         </Route>
 

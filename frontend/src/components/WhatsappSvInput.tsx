@@ -28,10 +28,6 @@ export function WhatsappSvInput({
       {label}
       <div className="whatsapp-input-row">
         <div className="phone-input-shell">
-          <div className="phone-country-fixed" aria-label="El Salvador country selector">
-            <span className="phone-flag" aria-hidden="true">ES</span>
-            <span className="phone-caret" aria-hidden="true">▼</span>
-          </div>
           <div className="phone-prefix" aria-hidden="true">+503</div>
           <input
             type="tel"

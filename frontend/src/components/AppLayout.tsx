@@ -1,20 +1,62 @@
+import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import logoLoader from "../assets/logo-loader.svg";
 
 export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { api, token } = useAuth();
   const isSellActive =
     location.pathname.startsWith("/publish") || location.pathname.startsWith("/sell-demands");
-  const isAccountScreen = location.pathname.startsWith("/account");
   const activeModeLabel = isSellActive ? "Vendo" : "Busco";
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!token) {
+      setTokenBalance(null);
+      return;
+    }
+
+    api
+      .get<{ ok: true; data: { tokens: number | null } }>(
+        "/profile/status",
+        undefined,
+        { suppressGlobalLoader: true }
+      )
+      .then((response) => {
+        if (!cancelled) {
+          setTokenBalance(
+            typeof response.data.tokens === "number" ? response.data.tokens : null
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTokenBalance(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, token, location.pathname]);
 
   return (
     <div className="mobile-shell">
       <header className="topbar">
-        {isAccountScreen ? (
-          <div className="header-mode-placeholder" aria-hidden="true" />
-        ) : (
+        <div className="header-left-cluster">
+          <div className="header-token-balance" aria-label="Balance de tokens">
+            <span className="header-token-icon" aria-hidden="true">
+              <img src={logoLoader} alt="" className="header-token-coin-logo" />
+            </span>
+            <span className="header-token-value">{tokenBalance ?? "-"}</span>
+          </div>
+        </div>
+
+        <div className="header-center-slot">
           <button
             type="button"
             className="header-mode-toggle"
@@ -23,11 +65,7 @@ export function AppLayout() {
           >
             <span className="active-word">{activeModeLabel}</span>
           </button>
-        )}
-
-        <button type="button" className="logo-mark" onClick={() => navigate("/search")} aria-label="Ir a inicio">
-          <img src={logoLoader} alt="Light" className="header-logo-icon" />
-        </button>
+        </div>
 
         <button
           type="button"

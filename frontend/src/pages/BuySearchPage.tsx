@@ -460,6 +460,10 @@ export function BuySearchPage() {
               placeholder=""
             />
           </label>
+
+          <button type="submit" disabled={loading || isSearchQueued}>
+            Buscar
+          </button>
         </form>
       </Card>
 

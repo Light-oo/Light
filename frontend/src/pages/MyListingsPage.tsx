@@ -1,102 +1,113 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
-import { labelForId } from "../lib/marketOptions";
 import {
-  fetchActiveListingPrices,
-  fetchMarketOptions,
+  fetchMyDemands,
   fetchMyListings,
-  type MarketOptionRow,
+  setMyDemandInactive,
+  type MyDemandRow,
   type MyListingRow
 } from "../lib/supabaseData";
 
-function resolvePrice(row: MyListingRow, activePriceMap: Record<string, { price_amount: number; currency: string }>) {
-  const pricing = row.pricing;
-  if (Array.isArray(pricing) && pricing.length > 0) {
-    return { amount: pricing[0].price_amount, currency: pricing[0].currency };
+function displayValue(value: unknown) {
+  if (value === undefined || value === null) {
+    return "\u2014";
   }
-  if (pricing && !Array.isArray(pricing)) {
-    return { amount: pricing.price_amount, currency: pricing.currency };
+  return String(value);
+}
+
+function buildIdentityLabel(input: {
+  partLabel: unknown;
+  brandLabel: unknown;
+  modelLabel: unknown;
+  yearLabel: unknown;
+}) {
+  return `${displayValue(input.partLabel)} / ${displayValue(input.brandLabel)} / ${displayValue(input.modelLabel)} / ${displayValue(input.yearLabel)}`;
+}
+
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
   }
-  const activePrice = activePriceMap[row.id];
-  if (activePrice) {
-    return { amount: activePrice.price_amount, currency: activePrice.currency };
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
 }
 
-function resolveLocation(row: MyListingRow) {
-  const location = row.listing_locations;
-  if (Array.isArray(location) && location.length > 0) {
-    return {
-      department: location[0].department,
-      municipality: location[0].municipality
-    };
+function resolveListingPrice(row: MyListingRow) {
+  const pricing = row.pricing;
+  const rootRow = row as unknown as Record<string, unknown>;
+  const amountCandidates: unknown[] = [
+    Array.isArray(pricing) ? pricing[0]?.price_amount : pricing?.price_amount,
+    row.price_amount,
+    row.listing_price,
+    row.price,
+    rootRow.price_amount,
+    rootRow.listing_price,
+    rootRow.price
+  ];
+
+  const amount = amountCandidates
+    .map((candidate) => numericValue(candidate))
+    .find((candidate) => candidate !== null);
+
+  if (amount === undefined || amount === null) {
+    return "—";
   }
-  if (location && !Array.isArray(location)) {
-    return {
-      department: location.department,
-      municipality: location.municipality
-    };
-  }
-  return null;
+
+  const numericAmount = amount;
+  const formattedAmount =
+    Number.isInteger(numericAmount) ? String(numericAmount) : numericAmount.toFixed(2);
+  return `$${formattedAmount}`;
 }
 
 function ListingGroup({
   title,
   rows,
-  marketRows,
-  activePriceMap,
   mode,
   onSetInactive,
-  onRepublish,
+  onSetActive,
   togglingById
 }: {
   title: string;
   rows: MyListingRow[];
-  marketRows: MarketOptionRow[];
-  activePriceMap: Record<string, { price_amount: number; currency: string }>;
   mode: "active" | "inactive";
   onSetInactive: (row: MyListingRow) => void;
-  onRepublish: (row: MyListingRow) => void;
+  onSetActive: (row: MyListingRow) => void;
   togglingById: Record<string, boolean>;
 }) {
   return (
     <Card className="stack">
       <h3 className="section-title">{title}</h3>
-      {rows.length === 0 ? <p>No listings in this group.</p> : null}
+      {rows.length === 0 ? <p>No hay publicaciones en este grupo.</p> : null}
       {rows.map((row) => {
         const specs = row.item_specs;
-        const price = resolvePrice(row, activePriceMap);
-        const location = resolveLocation(row);
-        const signatureLabel = specs
-          ? `${labelForId(marketRows, "brand", specs.brand_id)} / ${labelForId(marketRows, "model", specs.model_id)} / ${labelForId(marketRows, "year", specs.year_id)} / ${labelForId(marketRows, "itemType", specs.item_type_id)} / ${labelForId(marketRows, "part", specs.part_id)}`
-          : "No item_specs";
+        const identityLabel = buildIdentityLabel({
+          partLabel: row.part_label_es ?? specs?.part_label_es,
+          brandLabel: row.brand_label_es ?? specs?.brand_label_es,
+          modelLabel: row.model_label_es ?? specs?.model_label_es,
+          yearLabel: row.year ?? specs?.year
+        });
         return (
           <article key={row.id} className="card stack listing-row">
-            <div className="row-between">
-              <strong>{specs ? `${labelForId(marketRows, "brand", specs.brand_id)} ${labelForId(marketRows, "model", specs.model_id)}` : "Pieza"}</strong>
-              <span className={row.status === "active" ? "status status-active" : "status status-inactive"}>
-                {row.status}
-              </span>
-            </div>
-            <p><strong>Created:</strong> {new Date(row.created_at).toLocaleString()}</p>
-            <p>
-              <strong>Signature:</strong>{" "}
-              {signatureLabel}
-            </p>
-            <p><strong>Price:</strong> {price ? `${price.amount} ${price.currency}` : "Not available"}</p>
-            {location ? <p><strong>Location:</strong> {location.department}, {location.municipality}</p> : null}
+            <strong>{identityLabel}</strong>
+            <p>{resolveListingPrice(row)}</p>
+            <p><strong>Creado:</strong> {new Date(row.created_at).toLocaleString()}</p>
             {mode === "active" ? (
               <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
-                {togglingById[row.id] ? "Updating..." : "Set Inactive"}
+                {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
               </button>
             ) : (
-              <button type="button" onClick={() => onRepublish(row)}>
-                Republish
+              <button type="button" onClick={() => onSetActive(row)} disabled={Boolean(togglingById[row.id])}>
+                {togglingById[row.id] ? "Actualizando..." : "Reactivar"}
               </button>
             )}
           </article>
@@ -106,35 +117,67 @@ function ListingGroup({
   );
 }
 
+function DemandGroup({
+  title,
+  rows,
+  onSetInactive,
+  togglingById
+}: {
+  title: string;
+  rows: MyDemandRow[];
+  onSetInactive: (row: MyDemandRow) => void;
+  togglingById: Record<string, boolean>;
+}) {
+  return (
+    <Card className="stack">
+      <h3 className="section-title">{title}</h3>
+      {rows.length === 0 ? <p>No hay publicaciones en este grupo.</p> : null}
+      {rows.map((row) => {
+        const identityLabel = buildIdentityLabel({
+          partLabel: row.part_label_es,
+          brandLabel: row.brand_label_es,
+          modelLabel: row.model_label_es,
+          yearLabel: row.year
+        });
+        const isActive = row.status === "open";
+        return (
+          <article key={row.id} className="card stack listing-row">
+            <strong>{identityLabel}</strong>
+            <p><strong>Creado:</strong> {new Date(row.created_at).toLocaleString()}</p>
+            {isActive ? (
+              <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
+                {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
+              </button>
+            ) : null}
+          </article>
+        );
+      })}
+    </Card>
+  );
+}
+
 export function MyListingsPage() {
   const { api, token, userId } = useAuth();
-  const navigate = useNavigate();
   const [rows, setRows] = useState<MyListingRow[]>([]);
-  const [marketRows, setMarketRows] = useState<MarketOptionRow[]>([]);
-  const [activePriceMap, setActivePriceMap] = useState<Record<string, { price_amount: number; currency: string }>>({});
-  const [loading, setLoading] = useState(false);
+  const [demands, setDemands] = useState<MyDemandRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [togglingById, setTogglingById] = useState<Record<string, boolean>>({});
+  const [togglingDemandById, setTogglingDemandById] = useState<Record<string, boolean>>({});
 
   async function load() {
     if (!token || !userId) {
       return;
     }
-    setLoading(true);
     setError(null);
     try {
-      const [listings, options, prices] = await Promise.all([
+      const [listings, demandRows] = await Promise.all([
         fetchMyListings(token, userId),
-        fetchMarketOptions(token),
-        fetchActiveListingPrices(token)
+        fetchMyDemands(token, userId)
       ]);
       setRows(listings);
-      setMarketRows(options);
-      setActivePriceMap(prices);
+      setDemands(demandRows);
     } catch (err) {
       setError(toUiErrorMessage(err));
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -142,11 +185,15 @@ export function MyListingsPage() {
     load();
   }, [token, userId]);
 
-  async function setInactive(row: MyListingRow) {
-    if (togglingById[row.id]) {
+  async function updateListingStatus(row: MyListingRow, nextStatus: "active" | "inactive") {
+    if (togglingById[row.id] || row.status === nextStatus) {
       return;
     }
-    const confirmed = window.confirm("Are you sure you want to set this listing inactive?");
+    const confirmed = window.confirm(
+      nextStatus === "inactive"
+        ? "Are you sure you want to set this listing inactive?"
+        : "Are you sure you want to reactivate this listing?"
+    );
     if (!confirmed) {
       return;
     }
@@ -155,9 +202,9 @@ export function MyListingsPage() {
 
     try {
       await api.patch<{ ok: true; data: { listingId: string; status: string } }>(`/listings/${row.id}/status`, {
-        status: "inactive"
+        status: nextStatus
       });
-      setRows((current) => current.map((item) => (item.id === row.id ? { ...item, status: "inactive" } : item)));
+      setRows((current) => current.map((item) => (item.id === row.id ? { ...item, status: nextStatus } : item)));
     } catch (err) {
       if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
         setError(toUiErrorMessage(err));
@@ -169,65 +216,70 @@ export function MyListingsPage() {
     }
   }
 
-  function republish(row: MyListingRow) {
-    const specs = row.item_specs;
-    const price = resolvePrice(row, activePriceMap);
-    const location = resolveLocation(row);
-    if (!specs) {
-      setError("Unable to republish this listing. Listing signature is incomplete.");
+  function setInactive(row: MyListingRow) {
+    return updateListingStatus(row, "inactive");
+  }
+
+  function setActive(row: MyListingRow) {
+    return updateListingStatus(row, "active");
+  }
+
+  async function setDemandInactive(row: MyDemandRow) {
+    if (!token || !userId || togglingDemandById[row.id]) {
       return;
     }
 
-    const confirmed = window.confirm("Are you sure you want to publish this offer again?");
+    const confirmed = window.confirm("Are you sure you want to set this demand inactive?");
     if (!confirmed) {
       return;
     }
 
-    navigate("/publish", {
-      state: {
-        republishPrefill: {
-          brandId: specs.brand_id,
-          modelId: specs.model_id,
-          yearId: specs.year_id,
-          itemTypeId: specs.item_type_id,
-          partId: specs.part_id,
-          priceAmount: price ? String(price.amount) : "",
-          location: location ?? undefined
-        }
+    setTogglingDemandById((current) => ({ ...current, [row.id]: true }));
+
+    try {
+      const updated = await setMyDemandInactive(token, userId, row.id);
+      if (!updated) {
+        setError("No se encontro la demanda.");
+        return;
       }
-    });
+      setDemands((current) => current.map((item) => (item.id === row.id ? { ...item, status: "inactive" } : item)));
+    } catch (err) {
+      setError(toUiErrorMessage(err));
+    } finally {
+      setTogglingDemandById((current) => ({ ...current, [row.id]: false }));
+    }
   }
 
   const activeRows = useMemo(() => rows.filter((row) => row.status === "active"), [rows]);
   const inactiveRows = useMemo(() => rows.filter((row) => row.status !== "active"), [rows]);
+  const activeDemands = useMemo(() => demands.filter((row) => row.status === "open"), [demands]);
 
   return (
     <div className="screen stack gap-lg">
-      <Card title="Seller Listings Management">
-        <button type="button" onClick={load} disabled={loading} className="ghost">Refresh</button>
-      </Card>
-
       {error ? <p className="error">{error}</p> : null}
 
+      <DemandGroup
+        title={`Demandas Activas (${activeDemands.length})`}
+        rows={activeDemands}
+        onSetInactive={setDemandInactive}
+        togglingById={togglingDemandById}
+      />
+
       <ListingGroup
-        title={`Active Listings (${activeRows.length})`}
+        title={`Ventas Activas (${activeRows.length})`}
         rows={activeRows}
-        marketRows={marketRows}
-        activePriceMap={activePriceMap}
         mode="active"
         onSetInactive={setInactive}
-        onRepublish={republish}
+        onSetActive={setActive}
         togglingById={togglingById}
       />
 
       <ListingGroup
-        title={`Inactive Listings (${inactiveRows.length})`}
+        title={`Ventas Inactivas (${inactiveRows.length})`}
         rows={inactiveRows}
-        marketRows={marketRows}
-        activePriceMap={activePriceMap}
         mode="inactive"
         onSetInactive={setInactive}
-        onRepublish={republish}
+        onSetActive={setActive}
         togglingById={togglingById}
       />
     </div>
