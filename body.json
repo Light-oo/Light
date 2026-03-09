@@ -1,0 +1,11 @@
+{
+  "brand": "chevrolet",
+  "model": "aveo",
+  "year": "2000",
+  "item_type": "aire_acondicionado",
+  "part": "evaporador",
+  "price": {
+    "amount": 123,
+    "type": "fixed"
+  }
+}

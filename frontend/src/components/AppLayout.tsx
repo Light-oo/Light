@@ -7,10 +7,23 @@ export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { api, token } = useAuth();
+  const isSearchRoute = location.pathname.startsWith("/search");
+  const isPublishRoute = location.pathname.startsWith("/publish");
+  const isAccountRoute = location.pathname.startsWith("/account");
   const isSellActive =
-    location.pathname.startsWith("/publish") || location.pathname.startsWith("/sell-demands");
+    isPublishRoute || location.pathname.startsWith("/sell-demands");
   const activeModeLabel = isSellActive ? "Vendo" : "Busco";
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+
+  function resolveHeaderModeTarget() {
+    if (isSearchRoute) {
+      return "/publish";
+    }
+    if (isPublishRoute || location.pathname.startsWith("/sell-demands")) {
+      return "/search";
+    }
+    return "/search";
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -60,8 +73,8 @@ export function AppLayout() {
           <button
             type="button"
             className="header-mode-toggle"
-            onClick={() => navigate(isSellActive ? "/search" : "/publish")}
-            title={isSellActive ? "Ir a Busco" : "Ir a Vendo"}
+            onClick={() => navigate(resolveHeaderModeTarget())}
+            title={isSearchRoute ? "Ir a Vendo" : "Ir a Busco"}
           >
             <span className="active-word">{activeModeLabel}</span>
           </button>
@@ -69,14 +82,20 @@ export function AppLayout() {
 
         <button
           type="button"
-          className="account-icon"
-          onClick={() => navigate("/account")}
-          aria-label="Open account"
+          className={isAccountRoute ? "account-icon is-menu" : "account-icon"}
+          onClick={() => navigate(isAccountRoute ? "/my-listings" : "/account")}
+          aria-label={isAccountRoute ? "Ir a Mis listas" : "Abrir cuenta"}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-            <circle cx="12" cy="7.5" r="3.5" />
-            <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
-          </svg>
+          {isAccountRoute ? (
+            <span className="header-menu-glyph" aria-hidden="true">
+              ☰
+            </span>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <circle cx="12" cy="7.5" r="3.5" />
+              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+            </svg>
+          )}
         </button>
       </header>
 

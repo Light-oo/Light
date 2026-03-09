@@ -1,0 +1,11 @@
+﻿{
+  "brand": "honda",
+  "model": "civic",
+  "year": "2000",
+  "item_type": "motor",
+  "part": "alternador",
+  "price": {
+    "amount": 123,
+    "type": "fixed"
+  }
+}

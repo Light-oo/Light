@@ -5,7 +5,6 @@ import { requireAuth } from "../middleware/requireAuth";
 import { logError, logInfo, logWarn } from "../lib/logger";
 import { consumeFixedWindow } from "../lib/rateLimit";
 import { createSupabaseAnon, createSupabaseServiceRole } from "../lib/supabase";
-import { normalizeWhatsappE164, setWhatsappForCurrentUser } from "../services/profileStatus";
 
 const router = Router();
 const service = createSupabaseServiceRole();
@@ -16,8 +15,7 @@ const signupRateWindowMs = 60 * 60 * 1000;
 const signupBodySchema = z.object({
   email: z.string().trim().email(),
   password: z.string().min(8),
-  confirm_password: z.string().min(1),
-  whatsapp: z.string().min(1)
+  confirm_password: z.string().min(1)
 }).superRefine((value, ctx) => {
   if (value.password !== value.confirm_password) {
     ctx.addIssue({
@@ -84,11 +82,6 @@ router.post("/auth/signup", async (req, res, next) => {
   }
   logInfo(req, "signup_attempt", { ip, emailDomain: parsed.email.split("@")[1] ?? null });
 
-  const normalizedWhatsapp = normalizeWhatsappE164(parsed.whatsapp);
-  if (!normalizedWhatsapp) {
-    return res.status(400).json({ ok: false, error: "INVALID_WHATSAPP_NUMBER" });
-  }
-
   const { data: createdUser, error: createError } = await service.auth.admin.createUser({
     email: parsed.email,
     password: parsed.password,
@@ -131,26 +124,6 @@ router.post("/auth/signup", async (req, res, next) => {
       ip,
       message: signInError?.message,
       status: (signInError as any)?.status
-    });
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  try {
-    await setWhatsappForCurrentUser(signedIn.session.access_token, userId, normalizedWhatsapp);
-  } catch (whatsappError: any) {
-    const rolledBack = await rollbackSignupUser(userId, req);
-    if (!rolledBack) {
-      return res.status(500).json({ ok: false, error: "unexpected_error" });
-    }
-    if (String(whatsappError?.code ?? "") === "WHATSAPP_IN_USE") {
-      logWarn(req, "signup_whatsapp_duplicate", { ip, userId });
-      return res.status(409).json({ ok: false, error: "WHATSAPP_ALREADY_IN_USE" });
-    }
-    logError(req, "signup_whatsapp_set_error", {
-      ip,
-      userId,
-      code: whatsappError?.code,
-      message: whatsappError?.message
     });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }

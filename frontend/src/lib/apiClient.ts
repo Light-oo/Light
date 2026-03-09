@@ -1,6 +1,6 @@
 export type ApiErrorPayload = {
   ok?: false;
-  error?: string;
+  error?: string | { code?: string; message?: string; detail?: unknown };
   issues?: Array<{ path: string; message: string; code: string }>;
   [key: string]: unknown;
 };
@@ -10,7 +10,13 @@ export class ApiError extends Error {
   readonly payload: ApiErrorPayload | null;
 
   constructor(status: number, payload: ApiErrorPayload | null) {
-    super(payload?.error ?? `http_${status}`);
+    const errorCode =
+      typeof payload?.error === "string"
+        ? payload.error
+        : typeof payload?.error?.code === "string"
+          ? payload.error.code
+          : null;
+    super(errorCode ?? `http_${status}`);
     this.status = status;
     this.payload = payload;
   }

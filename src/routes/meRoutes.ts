@@ -9,9 +9,49 @@ const idParamSchema = z.object({
   id: z.string().uuid()
 });
 
+const patchMeBodySchema = z.object({
+  department_id: z.number().int().positive().nullable()
+}).strict();
+
 router.get("/api/me", requireAuth, (req, res) => {
   const user = (req as unknown as { user: { id: string } }).user;
   res.json({ ok: true, userId: user.id });
+});
+
+router.patch("/api/me", requireAuth, async (req, res, next) => {
+  let parsed: z.infer<typeof patchMeBodySchema>;
+  try {
+    parsed = patchMeBodySchema.parse(req.body);
+  } catch (err) {
+    return next(err);
+  }
+
+  const authToken = (req as unknown as { authToken: string }).authToken;
+  const userId = (req as unknown as { user: { id: string } }).user.id;
+  const supabase = createSupabaseAnon({ accessToken: authToken });
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({ department_id: parsed.department_id })
+    .eq("id", userId)
+    .select("id,department_id")
+    .maybeSingle();
+
+  if (error) {
+    console.error("supabase_error", { code: error.code, message: error.message });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  if (!data) {
+    return res.status(403).json({ ok: false, error: "forbidden" });
+  }
+
+  return res.json({
+    ok: true,
+    data: {
+      department_id: (data as any).department_id ?? null
+    }
+  });
 });
 
 router.get("/api/me/buy-demands", requireAuth, async (req, res) => {

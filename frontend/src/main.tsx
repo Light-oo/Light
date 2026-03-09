@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { App } from "./App";
 import { LoadingProvider } from "./context/LoadingContext";
+import { MarketProvider } from "./context/MarketContext";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -11,7 +12,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <LoadingProvider>
       <BrowserRouter>
         <AuthProvider>
-          <App />
+          <MarketProvider>
+            <App />
+          </MarketProvider>
         </AuthProvider>
       </BrowserRouter>
     </LoadingProvider>

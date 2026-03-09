@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
+import { WHATSAPP_LOCAL_MAX_DIGITS, whatsappCountries } from "../lib/whatsappCountries";
 
 type WhatsappSvInputProps = {
-  label: string;
+  label?: string;
   localNumber: string;
   onChangeLocalNumber: (value: string) => void;
+  countryIso: string;
+  onChangeCountryIso: (iso: string) => void;
   required?: boolean;
   disabled?: boolean;
   readOnly?: boolean;
@@ -16,6 +19,8 @@ export function WhatsappSvInput({
   label,
   localNumber,
   onChangeLocalNumber,
+  countryIso,
+  onChangeCountryIso,
   required = false,
   disabled = false,
   readOnly = false,
@@ -25,21 +30,33 @@ export function WhatsappSvInput({
 }: WhatsappSvInputProps) {
   return (
     <label className="whatsapp-field">
-      {label}
+      {label ? <span>{label}</span> : null}
       <div className="whatsapp-input-row">
         <div className="phone-input-shell">
-          <div className="phone-prefix" aria-hidden="true">+503</div>
+          <select
+            value={countryIso}
+            onChange={(event) => onChangeCountryIso(event.target.value)}
+            className="phone-prefix-select"
+            disabled={disabled || readOnly}
+            aria-label="Código de país"
+          >
+            {whatsappCountries.map((country) => (
+              <option key={`${country.iso}-${country.country}`} value={country.iso}>
+                {`${country.country} ${country.dialCode}`}
+              </option>
+            ))}
+          </select>
           <input
             type="tel"
             inputMode="numeric"
-            pattern="\d{8}"
-            maxLength={8}
+            pattern="\d+"
+            maxLength={WHATSAPP_LOCAL_MAX_DIGITS}
             required={required}
             disabled={disabled}
             readOnly={readOnly}
             value={localNumber}
             onChange={(event) => {
-              const digitsOnly = event.target.value.replace(/\D/g, "").slice(0, 8);
+              const digitsOnly = event.target.value.replace(/\D/g, "").slice(0, WHATSAPP_LOCAL_MAX_DIGITS);
               onChangeLocalNumber(digitsOnly);
             }}
             placeholder={placeholder}

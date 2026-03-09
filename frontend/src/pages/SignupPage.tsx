@@ -2,7 +2,6 @@ import { FormEvent, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../lib/apiClient";
-import { WhatsappSvInput } from "../components/WhatsappSvInput";
 import { toUiErrorMessage } from "../lib/errorMessages";
 
 export function SignupPage() {
@@ -11,16 +10,11 @@ export function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [whatsappLocal, setWhatsappLocal] = useState("");
+  const [tosAccepted, setTosAccepted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [googleMessage, setGoogleMessage] = useState<string | null>(null);
 
-  const whatsappInlineError =
-    whatsappLocal.length === 0 || whatsappLocal.length === 8
-      ? null
-      : "Debe ingresar 8 digitos.";
-  const canSubmit = !loading && whatsappLocal.length === 8;
+  const canSubmit = !loading && tosAccepted;
 
   if (token) {
     return <Navigate to="/search" replace />;
@@ -41,19 +35,17 @@ export function SignupPage() {
       setError("Password and Confirm Password must match.");
       return;
     }
-
-    if (whatsappLocal.length !== 8) {
-      setError("Numero de WhatsApp invalido. Debe estar en formato +503XXXXXXXX.");
+    if (!tosAccepted) {
+      setError("Debe aceptar los Términos y Condiciones.");
       return;
     }
 
     setLoading(true);
     setError(null);
-    setGoogleMessage(null);
 
     try {
-      await signUp(email, password, confirmPassword, `+503${whatsappLocal}`);
-      navigate("/search", { replace: true });
+      await signUp(email, password, confirmPassword, true);
+      navigate("/verify-whatsapp", { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.payload?.error === "email_already_in_use") {
         setError("Email is already in use.");
@@ -104,25 +96,35 @@ export function SignupPage() {
           />
         </label>
 
-        <WhatsappSvInput
-          label="WhatsApp"
-          localNumber={whatsappLocal}
-          onChangeLocalNumber={setWhatsappLocal}
-          required
-          errorText={whatsappInlineError}
-        />
+        <div className="auth-checkbox-row">
+          <input
+            id="tosAccepted"
+            type="checkbox"
+            checked={tosAccepted}
+            onChange={(event) => setTosAccepted(event.target.checked)}
+            required
+          />
+          <span>
+            ¿Acepta los{" "}
+            <a
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="auth-checkbox-link"
+            >
+              Términos y Condiciones
+            </a>
+            ?
+          </span>
+        </div>
 
         {error ? <p className="error">{error}</p> : null}
-        {googleMessage ? <p className="info">{googleMessage}</p> : null}
 
         <button type="submit" disabled={!canSubmit}>
           Create Account
         </button>
         <button type="button" className="ghost" onClick={() => navigate("/")}>
           Cancel
-        </button>
-        <button type="button" className="ghost" onClick={() => setGoogleMessage("After Pilot")}>
-          Sign up with Google
         </button>
       </form>
     </div>

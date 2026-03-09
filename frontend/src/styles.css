@@ -1,5 +1,7 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap");
+
 :root {
-  font-family: "Segoe UI", Tahoma, sans-serif;
+  font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
   color: #ffffff;
   background: #000000;
   --bg: #000000;
@@ -16,6 +18,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
   background: var(--bg);
   color: var(--text);
 }
@@ -154,6 +157,27 @@ body {
   width: min(360px, 100%);
 }
 
+.auth-checkbox-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+}
+
+.auth-checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+}
+
+.auth-checkbox-link {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .landing-card {
   width: min(360px, 100%);
   text-align: center;
@@ -186,11 +210,23 @@ body {
   min-width: 0;
 }
 
-.phone-prefix {
+.phone-prefix,
+.phone-prefix-select {
   padding: 0.65rem 0.65rem;
   border-right: 1px solid var(--line);
   color: var(--muted);
   white-space: nowrap;
+  background: transparent;
+}
+
+.phone-prefix-select {
+  border: 0;
+  border-radius: 0;
+  min-height: 42px;
+}
+
+.phone-prefix-select:focus {
+  outline: none;
 }
 
 .phone-local-input {
@@ -264,6 +300,12 @@ body {
 
 .account-bottom-actions {
   margin-top: auto;
+}
+
+.account-help-button {
+  background: #ffffff;
+  color: #000000;
+  border-color: #ffffff;
 }
 
 .card {
@@ -365,6 +407,15 @@ body {
 .account-icon svg {
   width: 18px;
   height: 18px;
+}
+
+.account-icon.is-menu {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.header-menu-glyph {
+  transform: translateY(-1px);
 }
 
 .stack {
@@ -515,6 +566,90 @@ small {
   gap: 0.25rem;
 }
 
+.token-swipe-strip {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  touch-action: pan-y;
+  cursor: grab;
+  user-select: none;
+}
+
+.token-swipe-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.token-swipe-strip.is-dragging {
+  cursor: grabbing;
+}
+
+.token-swipe-card {
+  flex: 0 0 100%;
+  min-width: 100%;
+  max-width: 100%;
+  width: 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  min-height: 230px;
+  justify-content: center;
+  text-align: center;
+}
+
+.token-swipe-card .tokens-info-list {
+  width: 100%;
+  padding-left: 0;
+  list-style-position: inside;
+  align-items: center;
+}
+
+.token-entry-card {
+  align-items: center;
+  text-align: center;
+}
+
+.token-swipe-hint {
+  color: var(--muted);
+}
+
+.token-logo-card {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 180px;
+}
+
+.token-logo-placeholder {
+  width: 56px;
+  height: 56px;
+  opacity: 0.9;
+}
+
+.token-swipe-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.token-swipe-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #444444;
+}
+
+.token-swipe-dot.is-active {
+  background: #ffffff;
+}
+
 .page-title {
   margin: 0.1rem 0 0 0;
   font-size: 1.15rem;
@@ -526,6 +661,21 @@ small {
 
 .publish-bottom-button {
   width: 100%;
+}
+
+.publish-success-actions {
+  text-align: center;
+}
+
+.publish-success-prompt {
+  text-align: center;
+}
+
+.derived-profile-field input[readonly] {
+  opacity: 1;
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--bg);
 }
 
 .demand-card-compact {
@@ -543,21 +693,19 @@ small {
   text-align: center;
 }
 
-.whatsapp-icon-link {
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
-  border: 1px solid #4f7f5f;
-  color: #74b387;
+.reveal-open-whatsapp {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: fit-content;
+  padding: 0.6rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
   background: var(--bg);
-}
-
-.whatsapp-icon-link svg {
-  width: 22px;
-  height: 22px;
+  color: var(--text);
+  text-decoration: none;
+  font: inherit;
+  line-height: 1;
 }
 
 .collapsible-panel {
@@ -772,12 +920,26 @@ small {
   padding: 0;
 }
 
+.landing-activity-shell {
+  min-height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  place-items: stretch;
+  padding: 0;
+}
+
 .landing-topbar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 0.5rem;
   padding: 0.55rem 1rem 0.15rem;
+}
+
+.landing-topbar-minimal {
+  position: relative;
+  display: flex;
+  justify-content: center;
 }
 
 .landing-logo-mark {
@@ -800,6 +962,61 @@ small {
   gap: 0;
   padding: 0.4rem 1rem 0.2rem;
   align-self: center;
+}
+
+.landing-activity-section {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0.6rem 1rem calc(0.9rem + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.6rem;
+}
+
+.landing-message-only {
+  min-height: 0;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0.6rem 1rem calc(0.9rem + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 0.45rem;
+}
+
+.landing-intro-block {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.landing-intro-subtitle {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.landing-intro-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+}
+
+.landing-activity-title {
+  margin: 0;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 500;
 }
 
 .landing-message {
@@ -828,6 +1045,103 @@ small {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1;
+}
+
+.landing-topbar .account-icon {
+  justify-self: end;
+}
+
+.landing-topbar-minimal .account-icon {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.landing-footer {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.8rem 1rem calc(0.9rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+}
+
+.landing-footer p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.landing-footer-link {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 0.3rem 0.45rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.terms-page {
+  min-height: 100vh;
+  background: #000000;
+  color: #ffffff;
+  padding: 1rem;
+}
+
+.terms-container {
+  width: min(92vw, 760px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+
+.terms-container h1,
+.terms-container h2,
+.terms-container p {
+  margin: 0;
+}
+
+.terms-brand {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.terms-updated {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.terms-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.terms-section h2 {
+  font-size: 1rem;
+}
+
+.terms-section p,
+.terms-section li {
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.terms-section ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.terms-back {
+  margin-top: 0.6rem;
 }
 
 .register-machine {
@@ -945,6 +1259,24 @@ small {
   .landing-center-stack {
     gap: 0;
     padding: 0.2rem 1rem 0.15rem;
+  }
+
+  .landing-activity-section {
+    padding: 0.3rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    gap: 0.5rem;
+  }
+
+  .landing-message-only {
+    padding: 0.3rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    gap: 0.35rem;
+  }
+
+  .landing-intro-subtitle {
+    font-size: 0.86rem;
+  }
+
+  .landing-intro-title {
+    font-size: 1rem;
   }
 
   .landing-message p {

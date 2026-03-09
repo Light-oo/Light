@@ -22,12 +22,19 @@ export function FilterSelect({
   const sortedOptions = [...options].sort((a, b) =>
     a.label.localeCompare(b.label, "es", { sensitivity: "base", numeric: true })
   );
+  const useHiddenPlaceholder = placeholder.trim().toLowerCase() === "selecciona";
 
   return (
     <label>
       {label}
       <select value={value} onChange={(event) => onChange(event.target.value)} required={required} disabled={disabled}>
-        <option value="">{placeholder}</option>
+        {useHiddenPlaceholder ? (
+          <option value="" disabled hidden>
+            {placeholder}
+          </option>
+        ) : (
+          <option value="">{placeholder}</option>
+        )}
         {sortedOptions.map((option) => (
           <option key={option.id} value={option.id}>
             {option.label}

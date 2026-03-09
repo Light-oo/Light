@@ -1,9 +1,17 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
-import { createSupabaseAnon } from "../lib/supabase";
+import { createSupabaseAnon, createSupabaseServiceRole } from "../lib/supabase";
 import { requireWhatsappNumber } from "../services/profileStatus";
-import { searchOpenDemands } from "../services/demandSearch";
+import { resolveMarketConfiguration, type ResolvedMarket } from "../services/marketResolution";
+import {
+  searchBuyListingsByMarket,
+  searchSellDemandsByMarket
+} from "../services/marketSearchEngine";
+import {
+  createOrReuseOpenMarketDemand,
+  MarketDemandCreationError
+} from "../services/marketDemandCreation";
 
 const router = Router();
 
@@ -12,56 +20,257 @@ const paginationQuerySchema = {
   pageSize: z.coerce.number().int().min(1).max(50).optional()
 };
 
-const buyListingsQuerySchema = z.object({
-  mode: z.literal("BUY"),
-  brandId: z.string().uuid(),
-  modelId: z.string().uuid(),
-  yearId: z.string().uuid(),
-  itemTypeId: z.string().uuid(),
-  partId: z.string().uuid(),
-  detailsText: z.string().optional(),
-  ...paginationQuerySchema
-}).strict();
-
-const sellListingsQuerySchema = z.object({
-  mode: z.literal("SELL"),
-  brandId: z.string().uuid().optional(),
-  modelId: z.string().uuid().optional(),
-  yearId: z.string().uuid().optional(),
-  itemTypeId: z.string().uuid().optional(),
-  partId: z.string().uuid().optional(),
-  ...paginationQuerySchema
-}).strict();
-
-const listingsQuerySchema = z.discriminatedUnion("mode", [
-  buyListingsQuerySchema,
-  sellListingsQuerySchema
-]);
-
-function isDemandOpenDuplicate(error: any) {
-  if ((error?.code ?? "") !== "23505") {
-    return false;
-  }
-  const text = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`
-    .toLowerCase();
-  return text.includes("demands_open_unique_signature");
-}
+const listingsQuerySchema = z
+  .object({
+    mode: z.union([z.literal("BUY"), z.literal("SELL")]),
+    marketKey: z.string().trim().min(1),
+    detailsText: z.string().max(200).optional(),
+    ...paginationQuerySchema
+  })
+  .passthrough();
 
 const demandsQuerySchema = z
   .object({
-    brand_id: z.string().uuid().optional(),
-    model_id: z.string().uuid().optional(),
-    year_id: z.string().uuid().optional(),
-    item_type_id: z.string().uuid().optional(),
-    part_id: z.string().uuid().optional(),
-    brandId: z.string().uuid().optional(),
-    modelId: z.string().uuid().optional(),
-    yearId: z.string().uuid().optional(),
-    itemTypeId: z.string().uuid().optional(),
-    partId: z.string().uuid().optional(),
+    marketKey: z.string().trim().min(1),
     ...paginationQuerySchema
   })
-  .strict();
+  .passthrough();
+
+function uniqueNonEmpty(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
+async function fetchDepartmentNameByProfileId(
+  supabase: ReturnType<typeof createSupabaseAnon>,
+  profileIds: string[]
+) {
+  const uniqueIds = uniqueNonEmpty(profileIds);
+  if (uniqueIds.length === 0) {
+    return {} as Record<string, string>;
+  }
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,department_id")
+    .in("id", uniqueIds);
+
+  if (error) {
+    throw error;
+  }
+
+  const profileDepartmentMap = new Map<string, number>();
+  const departmentIds = new Set<number>();
+  for (const row of data ?? []) {
+    const profileId = normalizeText((row as any)?.id);
+    const rawDepartmentId = (row as any)?.department_id;
+    const departmentId =
+      typeof rawDepartmentId === "number"
+        ? rawDepartmentId
+        : typeof rawDepartmentId === "string" && rawDepartmentId.trim().length > 0
+          ? Number(rawDepartmentId)
+          : NaN;
+
+    if (!profileId || !Number.isFinite(departmentId)) {
+      continue;
+    }
+
+    profileDepartmentMap.set(profileId, departmentId);
+    departmentIds.add(departmentId);
+  }
+
+  const departmentNameById = new Map<number, string>();
+  if (departmentIds.size > 0) {
+    const service = createSupabaseServiceRole();
+    const { data: departmentRows, error: departmentError } = await service
+      .from("departments")
+      .select("id,name")
+      .in("id", [...departmentIds]);
+
+    if (!departmentError) {
+      for (const row of departmentRows ?? []) {
+        const id = (row as any)?.id;
+        const name = normalizeText((row as any)?.name);
+        if (typeof id === "number" && name) {
+          departmentNameById.set(id, name);
+        }
+      }
+    }
+  }
+
+  const out: Record<string, string> = {};
+  for (const [profileId, departmentId] of profileDepartmentMap.entries()) {
+    const departmentName = departmentNameById.get(departmentId);
+    if (departmentName) {
+      out[profileId] = departmentName;
+    }
+  }
+
+  return out;
+}
+
+function normalizeText(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim();
+}
+
+function normalizeQueryValue(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const normalized = normalizeQueryValue(item);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function extractMarketPayloadFromQuery(
+  query: Record<string, unknown>,
+  resolvedMarket: ResolvedMarket
+) {
+  const reservedKeys = new Set(["mode", "marketkey", "detailstext", "page", "pagesize"]);
+  const fieldKeys = new Set(resolvedMarket.fields.map((field) => field.key.toLowerCase()));
+  const payload: Record<string, string> = {};
+  const issues: Array<{ path: string; code: string; message: string }> = [];
+
+  for (const [rawKey, rawValue] of Object.entries(query)) {
+    const normalizedKey = rawKey.trim().toLowerCase();
+    if (!normalizedKey || reservedKeys.has(normalizedKey)) {
+      continue;
+    }
+    if (!fieldKeys.has(normalizedKey)) {
+      issues.push({
+        path: rawKey,
+        code: "unknown_field",
+        message: `Field "${rawKey}" is not defined for market "${resolvedMarket.market.key}". Use canonical field keys from market metadata.`
+      });
+      continue;
+    }
+
+    const normalizedValue = normalizeQueryValue(rawValue);
+    if (!normalizedValue) {
+      continue;
+    }
+    payload[normalizedKey] = normalizedValue;
+  }
+
+  return { payload, issues };
+}
+
+function parseSignatureValues(signature: unknown): Record<string, string> {
+  const text = normalizeText(signature);
+  if (!text.includes("|")) {
+    return {};
+  }
+
+  const parts = text.split("|").slice(1);
+  const values: Record<string, string> = {};
+  for (const part of parts) {
+    const separatorIndex = part.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const key = part.slice(0, separatorIndex).trim().toLowerCase();
+    const value = part.slice(separatorIndex + 1).trim();
+    if (!key || !value) {
+      continue;
+    }
+    values[key] = value;
+  }
+  return values;
+}
+
+function snakeToCamel(value: string) {
+  return value.replace(/_([a-z])/g, (_match, char: string) => char.toUpperCase());
+}
+
+function resolveIdentityValue(
+  row: Record<string, unknown>,
+  fieldKey: string,
+  signatureValues: Record<string, string>
+) {
+  const normalizedKey = fieldKey.toLowerCase();
+  const camel = snakeToCamel(normalizedKey);
+  const candidates = [
+    row[`${normalizedKey}_label_es`],
+    row[`${camel}LabelEs`],
+    row[`${normalizedKey}_label`],
+    row[`${camel}Label`],
+    row[normalizedKey],
+    row[camel],
+    signatureValues[normalizedKey]
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null) {
+      continue;
+    }
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return String(candidate);
+    }
+    if (typeof candidate === "string") {
+      const value = candidate.trim();
+      if (value.length > 0) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildIdentityValuesFromRow(
+  row: Record<string, unknown>,
+  resolvedMarket: ResolvedMarket,
+  signatureValues: Record<string, string>
+) {
+  const identityValues: Record<string, string> = {};
+  for (const field of resolvedMarket.fields) {
+    const key = field.key.toLowerCase();
+    const value = resolveIdentityValue(row, key, signatureValues);
+    if (value) {
+      identityValues[key] = value;
+    }
+  }
+  return identityValues;
+}
+
+function sendErrorResponse(params: {
+  res: any;
+  status: number;
+  error: string;
+  message: string;
+  marketKey?: string;
+  issues?: Array<{ path: string; code: string; message: string }>;
+}) {
+  const payload: Record<string, unknown> = {
+    ok: false,
+    error: params.error,
+    message: params.message
+  };
+  if (params.marketKey) {
+    payload.marketKey = params.marketKey;
+  }
+  if (params.issues && params.issues.length > 0) {
+    payload.issues = params.issues;
+  }
+  return params.res.status(params.status).json(payload);
+}
 
 router.get("/search/demands", requireAuth, async (req, res, next) => {
   let parsed: z.infer<typeof demandsQuerySchema>;
@@ -76,95 +285,177 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
   const supabase = createSupabaseAnon({ accessToken: authToken });
   const page = parsed.page ?? 1;
   const pageSize = parsed.pageSize ?? 20;
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  const marketKey = parsed.marketKey.trim().toLowerCase();
 
-  const filters = {
-    brandId: parsed.brandId ?? parsed.brand_id,
-    modelId: parsed.modelId ?? parsed.model_id,
-    yearId: parsed.yearId ?? parsed.year_id,
-    itemTypeId: parsed.itemTypeId ?? parsed.item_type_id,
-    partId: parsed.partId ?? parsed.part_id
-  };
+  let resolvedMarket: ResolvedMarket;
+  try {
+    resolvedMarket = await resolveMarketConfiguration(marketKey, { supabase: supabase as any });
+  } catch (error: any) {
+    const status = Number(error?.status ?? 500);
+    if (status === 404) {
+      return sendErrorResponse({
+        res,
+        status: 404,
+        error: "market_not_found",
+        message: "Market not found.",
+        marketKey
+      });
+    }
+    if (status === 409) {
+      return sendErrorResponse({
+        res,
+        status: 409,
+        error: "market_inactive",
+        message: "Market is inactive.",
+        marketKey
+      });
+    }
+    console.error("search_demands_market_resolution_error", {
+      marketKey,
+      code: error?.code,
+      message: error?.message
+    });
+    return sendErrorResponse({
+      res,
+      status: 500,
+      error: "unexpected_error",
+      message: "Unexpected search error.",
+      marketKey
+    });
+  }
 
-  console.info("search_demands_query", {
-    requesterUserId,
-    requesterProfileId: requesterUserId,
-    table: "demands",
-    where: {
-      status: "open",
-      ...(filters.brandId ? { brand_id: filters.brandId } : {}),
-      ...(filters.modelId ? { model_id: filters.modelId } : {}),
-      ...(filters.yearId ? { year_id: filters.yearId } : {}),
-      ...(filters.itemTypeId ? { item_type_id: filters.itemTypeId } : {}),
-      ...(filters.partId ? { part_id: filters.partId } : {})
-    },
-    orderBy: { created_at: "desc" },
-    range: { from, to }
-  });
+  const { payload: marketPayload, issues: payloadIssues } = extractMarketPayloadFromQuery(
+    req.query as Record<string, unknown>,
+    resolvedMarket
+  );
+  if (payloadIssues.length > 0) {
+    return sendErrorResponse({
+      res,
+      status: 400,
+      error: "invalid_request",
+      message: "Payload validation failed.",
+      marketKey: resolvedMarket.market.key,
+      issues: payloadIssues
+    });
+  }
 
-  const { data, count, error } = await searchOpenDemands({
-    supabase,
-    filters,
+  const sellSearch = await searchSellDemandsByMarket({
+    marketKey: resolvedMarket.market.key,
+    payload: marketPayload,
     page,
-    pageSize
+    pageSize,
+    accessToken: authToken,
+    supabase
   });
 
-  if (error) {
+  if (!sellSearch.ok) {
+    return sendErrorResponse({
+      res,
+      status: 400,
+      error: "invalid_request",
+      message: "Payload validation failed.",
+      marketKey: resolvedMarket.market.key,
+      issues: sellSearch.errors.map((issue) => ({
+        path: issue.fieldKey,
+        code: issue.code,
+        message: issue.message
+      }))
+    });
+  }
+
+  const demandIds = uniqueNonEmpty(
+    sellSearch.results.map((row) => normalizeText((row as any)?.id))
+  );
+
+  const { data: demandRows, error: demandRowsError } =
+    demandIds.length > 0
+      ? await supabase
+          .from("demands")
+          .select("*")
+          .in("id", demandIds)
+      : { data: [], error: null };
+
+  if (demandRowsError) {
     console.error("supabase_error", {
       route: "GET /search/demands",
       requesterUserId,
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint
+      code: demandRowsError.code,
+      message: demandRowsError.message,
+      details: (demandRowsError as any)?.details,
+      hint: (demandRowsError as any)?.hint
     });
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  console.info("search_demands_result", {
-    requesterUserId,
-    count: count ?? 0,
-    rows: (data ?? []).length,
-    filtersApplied: Object.values(filters).filter(Boolean).length
-  });
-
-  if ((count ?? 0) === 0) {
-    console.warn("search_demands_empty_result", {
-      requesterUserId,
-      note: "If OPEN demands exist in DB but this is empty, verify SELECT RLS policy for authenticated users on public.demands.",
-      statusFilter: "open",
-      filters
+    return sendErrorResponse({
+      res,
+      status: 500,
+      error: "unexpected_error",
+      message: "Unexpected search error.",
+      marketKey: resolvedMarket.market.key
     });
   }
 
-  const results = (data ?? []).map((row: any) => ({
-    cardType: "buy",
-    demandId: row.id,
-    what: {
-      brandId: row.brand_id,
-      modelId: row.model_id,
-      yearId: row.year_id,
-      itemTypeId: row.item_type_id,
-      partId: row.part_id
-    },
-    request: {
-      detailsText: row.details_text
-    },
-    audit: {
-      createdAt: row.created_at,
-      requesterUserId: row.requester_user_id,
-      status: row.status
+  const demandRowById = new Map<string, Record<string, unknown>>();
+  for (const row of (demandRows ?? []) as Record<string, unknown>[]) {
+    const demandId = normalizeText(row.id);
+    if (demandId) {
+      demandRowById.set(demandId, row);
     }
-  }));
+  }
+
+  let departmentByProfileId: Record<string, string> = {};
+  try {
+    departmentByProfileId = await fetchDepartmentNameByProfileId(
+      supabase,
+      uniqueNonEmpty(
+        sellSearch.results.map((row) => normalizeText((row as any)?.requester_user_id))
+      )
+    );
+  } catch (departmentError: any) {
+    console.warn("search_demands_department_lookup_error", {
+      code: departmentError?.code,
+      message: departmentError?.message
+    });
+  }
+
+  const results = sellSearch.results.map((resultRow) => {
+    const demandId = normalizeText((resultRow as any)?.id);
+    const fullRow = demandId ? demandRowById.get(demandId) ?? (resultRow as any) : (resultRow as any);
+    const signatureValues = parseSignatureValues((fullRow as any)?.intention_signature);
+    const requesterUserIdRaw = normalizeText((fullRow as any)?.requester_user_id);
+    const identityValues = buildIdentityValuesFromRow(
+      fullRow as Record<string, unknown>,
+      resolvedMarket,
+      signatureValues
+    );
+
+    return {
+      id: demandId,
+      marketKey: resolvedMarket.market.key,
+      identityValues,
+      signature: normalizeText((fullRow as any)?.intention_signature),
+      status: normalizeText((fullRow as any)?.status),
+      created_at: (fullRow as any)?.created_at,
+      type: "buy",
+      request: {
+        detailsText: (fullRow as any)?.details_text ?? null
+      },
+      location: {
+        department: requesterUserIdRaw ? departmentByProfileId[requesterUserIdRaw] ?? null : null
+      },
+      audit: {
+        requesterUserId: requesterUserIdRaw,
+        createdAt: (fullRow as any)?.created_at
+      }
+    };
+  });
 
   return res.json({
     ok: true,
     data: {
+      marketKey: resolvedMarket.market.key,
       results,
       page,
       pageSize,
-      total: count ?? 0
+      total: sellSearch.total
     }
   });
 });
@@ -179,182 +470,342 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
 
   const page = parsed.page ?? 1;
   const pageSize = parsed.pageSize ?? 20;
+  const marketKey = parsed.marketKey.trim().toLowerCase();
 
   const authToken = (req as unknown as { authToken: string }).authToken;
   const requesterUserId = (req as unknown as { user: { id: string } }).user.id;
   const supabase = createSupabaseAnon({ accessToken: authToken });
 
-  if (parsed.mode === "SELL") {
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
-
-    let demandsQuery = supabase
-      .from("demands")
-      .select(
-        "id,requester_user_id,status,brand_id,model_id,year_id,item_type_id,part_id,details_text,created_at",
-        { count: "exact" }
-      )
-      .eq("status", "open");
-
-    if (parsed.brandId) {
-      demandsQuery = demandsQuery.eq("brand_id", parsed.brandId);
+  let resolvedMarket: ResolvedMarket;
+  try {
+    resolvedMarket = await resolveMarketConfiguration(marketKey, { supabase: supabase as any });
+  } catch (error: any) {
+    const status = Number(error?.status ?? 500);
+    if (status === 404) {
+      return sendErrorResponse({
+        res,
+        status: 404,
+        error: "market_not_found",
+        message: "Market not found.",
+        marketKey
+      });
     }
-    if (parsed.modelId) {
-      demandsQuery = demandsQuery.eq("model_id", parsed.modelId);
+    if (status === 409) {
+      return sendErrorResponse({
+        res,
+        status: 409,
+        error: "market_inactive",
+        message: "Market is inactive.",
+        marketKey
+      });
     }
-    if (parsed.yearId) {
-      demandsQuery = demandsQuery.eq("year_id", parsed.yearId);
-    }
-    if (parsed.itemTypeId) {
-      demandsQuery = demandsQuery.eq("item_type_id", parsed.itemTypeId);
-    }
-    if (parsed.partId) {
-      demandsQuery = demandsQuery.eq("part_id", parsed.partId);
-    }
-
-    const { data, count, error } = await demandsQuery
-      .order("created_at", { ascending: false })
-      .range(from, to);
-
-    if (error) {
-      console.error("supabase_error", { code: error.code, message: error.message });
-      return res.status(500).json({ ok: false, error: "unexpected_error" });
-    }
-
-    const results = (data ?? []).map((row: any) => ({
-      cardType: "buy",
-      demandId: row.id,
-      what: {
-        brandId: row.brand_id,
-        modelId: row.model_id,
-        yearId: row.year_id,
-        itemTypeId: row.item_type_id,
-        partId: row.part_id
-      },
-      request: {
-        detailsText: row.details_text
-      },
-      audit: {
-        createdAt: row.created_at,
-        requesterUserId: row.requester_user_id,
-        status: row.status
-      }
-    }));
-
-    return res.json({
-      ok: true,
-      results,
-      page,
-      pageSize,
-      total: count ?? 0
+    console.error("search_market_resolution_error", {
+      marketKey,
+      code: error?.code,
+      message: error?.message
+    });
+    return sendErrorResponse({
+      res,
+      status: 500,
+      error: "unexpected_error",
+      message: "Unexpected search error.",
+      marketKey
     });
   }
 
-  const { data, error } = await supabase.rpc("get_sell_cards", {
-    brand_id: parsed.brandId,
-    model_id: parsed.modelId,
-    year_id: parsed.yearId,
-    item_type_id: parsed.itemTypeId,
-    part_id: parsed.partId,
+  const { payload: marketPayload, issues: payloadIssues } = extractMarketPayloadFromQuery(
+    req.query as Record<string, unknown>,
+    resolvedMarket
+  );
+  if (payloadIssues.length > 0) {
+    return sendErrorResponse({
+      res,
+      status: 400,
+      error: "invalid_request",
+      message: "Payload validation failed.",
+      marketKey: resolvedMarket.market.key,
+      issues: payloadIssues
+    });
+  }
+
+  if (parsed.mode === "SELL") {
+    const sellSearch = await searchSellDemandsByMarket({
+      marketKey: resolvedMarket.market.key,
+      payload: marketPayload,
+      page,
+      pageSize,
+      accessToken: authToken,
+      supabase
+    });
+
+    if (!sellSearch.ok) {
+      return sendErrorResponse({
+        res,
+        status: 400,
+        error: "invalid_request",
+        message: "Payload validation failed.",
+        marketKey: resolvedMarket.market.key,
+        issues: sellSearch.errors.map((issue) => ({
+          path: issue.fieldKey,
+          code: issue.code,
+          message: issue.message
+        }))
+      });
+    }
+
+    const demandIds = uniqueNonEmpty(
+      sellSearch.results.map((row) => normalizeText((row as any)?.id))
+    );
+
+    const { data: demandRows, error: demandRowsError } =
+      demandIds.length > 0
+        ? await supabase
+            .from("demands")
+            .select("*")
+            .in("id", demandIds)
+        : { data: [], error: null };
+
+    if (demandRowsError) {
+      console.error("search_sell_demands_lookup_error", {
+        code: demandRowsError.code,
+        message: demandRowsError.message
+      });
+      return sendErrorResponse({
+        res,
+        status: 500,
+        error: "unexpected_error",
+        message: "Unexpected search error.",
+        marketKey: resolvedMarket.market.key
+      });
+    }
+
+    const demandRowById = new Map<string, Record<string, unknown>>();
+    for (const row of (demandRows ?? []) as Record<string, unknown>[]) {
+      const demandId = normalizeText(row.id);
+      if (demandId) {
+        demandRowById.set(demandId, row);
+      }
+    }
+
+    let departmentByProfileId: Record<string, string> = {};
+    try {
+      departmentByProfileId = await fetchDepartmentNameByProfileId(
+        supabase,
+        uniqueNonEmpty(
+          sellSearch.results.map((row) => normalizeText((row as any)?.requester_user_id))
+        )
+      );
+    } catch (departmentError: any) {
+      console.warn("search_sell_mode_department_lookup_error", {
+        code: departmentError?.code,
+        message: departmentError?.message
+      });
+    }
+
+    const results = sellSearch.results.map((resultRow) => {
+      const demandId = normalizeText((resultRow as any)?.id);
+      const fullRow = demandId ? demandRowById.get(demandId) ?? (resultRow as any) : (resultRow as any);
+      const signatureValues = parseSignatureValues((fullRow as any)?.intention_signature);
+      const requesterUserIdRaw = normalizeText((fullRow as any)?.requester_user_id);
+      const identityValues = buildIdentityValuesFromRow(
+        fullRow as Record<string, unknown>,
+        resolvedMarket,
+        signatureValues
+      );
+
+      return {
+        id: demandId,
+        marketKey: resolvedMarket.market.key,
+        identityValues,
+        signature: normalizeText((fullRow as any)?.intention_signature),
+        status: normalizeText((fullRow as any)?.status),
+        created_at: (fullRow as any)?.created_at,
+        type: "buy",
+        request: {
+          detailsText: (fullRow as any)?.details_text ?? null
+        },
+        location: {
+          department: requesterUserIdRaw ? departmentByProfileId[requesterUserIdRaw] ?? null : null
+        },
+        audit: {
+          createdAt: (fullRow as any)?.created_at,
+          requesterUserId: requesterUserIdRaw
+        }
+      };
+    });
+
+    return res.json({
+      ok: true,
+      marketKey: resolvedMarket.market.key,
+      results,
+      page,
+      pageSize,
+      total: sellSearch.total
+    });
+  }
+
+  const buySearch = await searchBuyListingsByMarket({
+    marketKey: resolvedMarket.market.key,
+    payload: marketPayload,
+    requesterUserId,
     page,
-    page_size: pageSize
+    pageSize,
+    accessToken: authToken,
+    supabase
   });
 
-  if (error) {
-    console.error("supabase_error", { code: error.code, message: error.message });
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  if (!buySearch.ok) {
+    return sendErrorResponse({
+      res,
+      status: 400,
+      error: "invalid_request",
+      message: "Payload validation failed.",
+      marketKey: resolvedMarket.market.key,
+      issues: buySearch.errors.map((issue) => ({
+        path: issue.fieldKey,
+        code: issue.code,
+        message: issue.message
+      }))
+    });
   }
 
-  if (data && data.length > 0) {
-    const requiredColumns = [
-      "listing_id",
-      "brand_id",
-      "brand_label_es",
-      "model_id",
-      "model_label_es",
-      "year_id",
-      "year",
-      "item_type_id",
-      "item_type_label_es",
-      "part_id",
-      "part_label_es",
-      "price_amount",
-      "price_type",
-      "currency",
-      "department",
-      "municipality",
-      "created_at"
-    ];
-    const missing = requiredColumns.filter((col) => !(col in data[0]));
-    if (missing.length > 0) {
-      console.error("missing_columns", { missing });
-      return res.status(500).json({ ok: false, error: "unexpected_error" });
+  const listingIds = uniqueNonEmpty(
+    buySearch.results.map((row) => normalizeText((row as any)?.id))
+  );
+
+  const { data: buyRowsData, error: buyRowsError } =
+    listingIds.length > 0
+      ? await supabase
+          .from("listing_card_fields")
+          .select("*")
+          .in("listing_id", listingIds)
+      : { data: [], error: null };
+
+  if (buyRowsError) {
+    console.error("search_buy_cards_lookup_error", {
+      code: buyRowsError.code,
+      message: buyRowsError.message
+    });
+    return sendErrorResponse({
+      res,
+      status: 500,
+      error: "unexpected_error",
+      message: "Unexpected search error.",
+      marketKey: resolvedMarket.market.key
+    });
+  }
+
+  const buyRowByListingId = new Map<string, Record<string, unknown>>();
+  for (const row of (buyRowsData ?? []) as Record<string, unknown>[]) {
+    const listingId = normalizeText(row.listing_id);
+    if (listingId) {
+      buyRowByListingId.set(listingId, row);
     }
   }
 
-  let buyRows = (data ?? []) as any[];
-  let selfOwnedHiddenCount = 0;
+  const listingOwnerByListingId: Record<string, string> = {};
+  for (const row of buySearch.results) {
+    const listingId = normalizeText((row as any)?.id);
+    const ownerId = normalizeText((row as any)?.seller_profile_id);
+    if (listingId && ownerId) {
+      listingOwnerByListingId[listingId] = ownerId;
+    }
+  }
 
-  if (buyRows.length > 0) {
-    const listingIds = buyRows.map((row) => row.listing_id).filter(Boolean);
-    if (listingIds.length > 0) {
-      const { data: ownListings, error: ownListingsError } = await supabase
-        .from("listings")
-        .select("id")
-        .eq("seller_profile_id", requesterUserId)
-        .in("id", listingIds);
+  let departmentBySellerProfileId: Record<string, string> = {};
+  try {
+    departmentBySellerProfileId = await fetchDepartmentNameByProfileId(
+      supabase,
+      uniqueNonEmpty(Object.values(listingOwnerByListingId))
+    );
+  } catch (departmentError: any) {
+    console.warn("search_buy_mode_department_lookup_error", {
+      code: departmentError?.code,
+      message: departmentError?.message
+    });
+  }
 
-      if (ownListingsError) {
-        console.error("supabase_error", {
-          code: ownListingsError.code,
-          message: ownListingsError.message
-        });
-        return res.status(500).json({ ok: false, error: "unexpected_error" });
+  const results = buySearch.results.map((resultRow) => {
+    const listingId = normalizeText((resultRow as any)?.id);
+    const cardRow = listingId ? buyRowByListingId.get(listingId) : undefined;
+    const signatureValues = parseSignatureValues(
+      (cardRow as any)?.intention_signature ?? (resultRow as any)?.intention_signature
+    );
+    const rowForIdentity = {
+      ...(resultRow as Record<string, unknown>),
+      ...(cardRow as Record<string, unknown>),
+      identity: signatureValues
+    };
+    const identityValues = buildIdentityValuesFromRow(
+      rowForIdentity,
+      resolvedMarket,
+      signatureValues
+    );
+    const ownerId = listingId ? listingOwnerByListingId[listingId] ?? "" : "";
+
+    return {
+      id: listingId,
+      marketKey: resolvedMarket.market.key,
+      identityValues,
+      signature: normalizeText((cardRow as any)?.intention_signature ?? (resultRow as any)?.intention_signature),
+      status: normalizeText((cardRow as any)?.status ?? (resultRow as any)?.status),
+      created_at:
+        normalizeText((cardRow as any)?.created_at) ||
+        normalizeText((resultRow as any)?.created_at),
+      type: "sell",
+      price: {
+        amount: Number((cardRow as any)?.price_amount ?? 0),
+        type: normalizeText((cardRow as any)?.price_type) || "fixed",
+        currency: normalizeText((cardRow as any)?.currency) || "USD"
+      },
+      location: {
+        department: (ownerId && departmentBySellerProfileId[ownerId]) || normalizeText((cardRow as any)?.department) || null,
+        municipality: normalizeText((cardRow as any)?.municipality) || null
+      },
+      audit: {
+        createdAt:
+          normalizeText((cardRow as any)?.created_at) ||
+          normalizeText((resultRow as any)?.created_at),
+        ownerUserId: ownerId || null
       }
-
-      if (ownListings && ownListings.length > 0) {
-        selfOwnedHiddenCount = ownListings.length;
-        const ownIds = new Set(ownListings.map((row: any) => row.id));
-        buyRows = buyRows.filter((row) => !ownIds.has(row.listing_id));
-      }
-    }
-  }
-
-  const results = buyRows.map((row: any) => ({
-    cardType: "sell",
-    listingId: row.listing_id,
-    what: {
-      brandId: row.brand_id,
-      brandLabelEs: row.brand_label_es,
-      modelId: row.model_id,
-      modelLabelEs: row.model_label_es,
-      yearId: row.year_id,
-      year: row.year,
-      itemTypeId: row.item_type_id,
-      itemTypeLabelEs: row.item_type_label_es,
-      partId: row.part_id,
-      partLabelEs: row.part_label_es
-    },
-    price: {
-      amount: row.price_amount,
-      type: row.price_type,
-      currency: row.currency
-    },
-    location: {
-      department: row.department,
-      municipality: row.municipality
-    },
-    audit: {
-      createdAt: row.created_at
-    }
-  }));
+    };
+  });
 
   let zeroResultsData: Record<string, unknown> | undefined;
 
   if (results.length === 0) {
-    if (selfOwnedHiddenCount > 0) {
+    let ownListingExists = false;
+    const ownQueryByMarketKey = await supabase
+      .from("listings")
+      .select("id")
+      .eq("listing_type", "sell")
+      .eq("status", "active")
+      .eq("seller_profile_id", requesterUserId)
+      .eq("intention_signature", buySearch.signature)
+      .eq("market_key", resolvedMarket.market.key)
+      .limit(1)
+      .maybeSingle();
+
+    if (!ownQueryByMarketKey.error && ownQueryByMarketKey.data) {
+      ownListingExists = true;
+    } else if (resolvedMarket.market.id) {
+      const ownQueryByMarketId = await supabase
+        .from("listings")
+        .select("id")
+        .eq("listing_type", "sell")
+        .eq("status", "active")
+        .eq("seller_profile_id", requesterUserId)
+        .eq("intention_signature", buySearch.signature)
+        .eq("market_id", resolvedMarket.market.id)
+        .limit(1)
+        .maybeSingle();
+      ownListingExists = !ownQueryByMarketId.error && Boolean(ownQueryByMarketId.data);
+    }
+
+    if (ownListingExists) {
       return res.json({
         ok: true,
+        marketKey: resolvedMarket.market.key,
         results,
         page,
         pageSize,
@@ -371,6 +822,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
       if (String(whatsappGuardError?.code ?? "") === "WHATSAPP_REQUIRED") {
         return res.json({
           ok: true,
+          marketKey: resolvedMarket.market.key,
           results,
           page,
           pageSize,
@@ -384,109 +836,75 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         code: whatsappGuardError?.code,
         message: whatsappGuardError?.message
       });
-      return res.status(500).json({ ok: false, error: "unexpected_error" });
+      return sendErrorResponse({
+        res,
+        status: 500,
+        error: "unexpected_error",
+        message: "Unexpected search error.",
+        marketKey: resolvedMarket.market.key
+      });
     }
 
-    const demandSignature = {
-      requester_user_id: requesterUserId,
-      status: "open",
-      brand_id: parsed.brandId,
-      model_id: parsed.modelId,
-      year_id: parsed.yearId,
-      item_type_id: parsed.itemTypeId,
-      part_id: parsed.partId
-    };
-
-    const { error: insertError } = await supabase.from("demands").insert({
-      ...demandSignature,
-      details_text: parsed.detailsText ?? null
-    });
-
-    if (insertError) {
-      if (isDemandOpenDuplicate(insertError)) {
-        const incomingDetailsText = parsed.detailsText?.trim() ?? "";
-        console.warn("handled_duplicate_demand_existing_open", {
-          code: insertError.code,
-          message: insertError.message,
-          ...demandSignature
-        });
-        const { data: existingDemand, error: existingDemandError } = await supabase
-          .from("demands")
-          .select("id,details_text")
-          .eq("requester_user_id", requesterUserId)
-          .eq("status", "open")
-          .eq("brand_id", parsed.brandId)
-          .eq("model_id", parsed.modelId)
-          .eq("year_id", parsed.yearId)
-          .eq("item_type_id", parsed.itemTypeId)
-          .eq("part_id", parsed.partId)
-          .limit(1)
-          .maybeSingle();
-
-        if (existingDemandError) {
-          console.error("supabase_error", {
-            code: existingDemandError.code,
-            message: existingDemandError.message
-          });
-          return res.status(500).json({ ok: false, error: "unexpected_error" });
-        }
-
-        if (!existingDemand) {
-          console.warn("handled_duplicate_demand_missing_after_select", demandSignature);
-        } else if (incomingDetailsText.length > 0) {
-          const { error: updateExistingDemandError } = await supabase
-            .from("demands")
-            .update({
-              details_text: incomingDetailsText,
-              updated_at: new Date().toISOString()
-            })
-            .eq("id", existingDemand.id)
-            .eq("requester_user_id", requesterUserId)
-            .eq("status", "open");
-
-          if (updateExistingDemandError) {
-            console.error("supabase_error", {
-              code: updateExistingDemandError.code,
-              message: updateExistingDemandError.message
-            });
-            return res.status(500).json({ ok: false, error: "unexpected_error" });
-          }
-
-          console.warn("handled_duplicate_demand_updated_details", {
-            demandId: existingDemand.id,
-            didUpdateDetails: true
-          });
-          zeroResultsData = {
-            ...(zeroResultsData ?? {}),
-            demandAction: "updated"
-          };
-        } else {
-          zeroResultsData = {
-            ...(zeroResultsData ?? {}),
-            demandAction: "existing"
-          };
-        }
-      } else {
-      console.error("supabase_error", {
-        code: insertError.code,
-        message: insertError.message
+    try {
+      const demandResult = await createOrReuseOpenMarketDemand({
+        accessToken: authToken,
+        userId: requesterUserId,
+        marketKey: resolvedMarket.market.key,
+        payload: buySearch.normalizedPayload,
+        detailsText: parsed.detailsText,
+        supabase
       });
-      return res.status(500).json({ ok: false, error: "unexpected_error" });
-      }
-    } else {
+
       zeroResultsData = {
         ...(zeroResultsData ?? {}),
-        demandAction: "created"
+        demandAction: demandResult.action
       };
+    } catch (error) {
+      if (error instanceof MarketDemandCreationError) {
+        if (error.status === 400) {
+          return sendErrorResponse({
+            res,
+            status: 400,
+            error: "invalid_request",
+            message: "Payload validation failed.",
+            marketKey: resolvedMarket.market.key,
+            issues: error.issues ?? []
+          });
+        }
+        console.error("supabase_error", {
+          code: error.code,
+          message: error.message
+        });
+        return sendErrorResponse({
+          res,
+          status: 500,
+          error: "unexpected_error",
+          message: "Unexpected search error.",
+          marketKey: resolvedMarket.market.key
+        });
+      }
+
+      console.error("supabase_error", {
+        code: (error as any)?.code,
+        message: (error as any)?.message
+      });
+      return sendErrorResponse({
+        res,
+        status: 500,
+        error: "unexpected_error",
+        message: "Unexpected search error.",
+        marketKey: resolvedMarket.market.key
+      });
     }
   }
 
   const responsePayload: Record<string, unknown> = {
     ok: true,
+    marketKey: resolvedMarket.market.key,
     results,
     page,
     pageSize,
-    total: results.length
+    total: buySearch.total
   };
 
   if (zeroResultsData) {

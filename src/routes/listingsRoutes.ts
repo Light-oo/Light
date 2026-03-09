@@ -1,10 +1,13 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
 import { logWarn } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
 import { requireWhatsappNumber } from "../services/profileStatus";
+import {
+  createMarketAwareSellListing,
+  MarketListingCreationError
+} from "../services/marketListingCreation";
 
 const router = Router();
 
@@ -14,20 +17,16 @@ const locationSchema = z.object({
 });
 
 const createListingSchema = z.object({
-  brandId: z.string().uuid(),
-  modelId: z.string().uuid(),
-  yearId: z.string().uuid(),
-  itemTypeId: z.string().uuid(),
-  partId: z.string().uuid(),
+  marketKey: z.string().trim().min(1),
   price: z
     .object({
-      amount: z.number().positive(),
+      amount: z.number().finite().gt(0).lte(10000),
       type: z.literal("fixed")
     })
-    .strict(),
+    .strict()
+    .optional(),
   location: locationSchema.optional()
-})
-  .strict();
+}).passthrough();
 
 const listingIdParamSchema = z.object({
   listingId: z.string().uuid()
@@ -46,15 +45,6 @@ function logDbError(step: string, error: any) {
     details: error?.details,
     hint: error?.hint
   });
-}
-
-function isDuplicateListingError(error: any) {
-  const code = error?.code ?? "";
-  const message = String(error?.message ?? "").toLowerCase();
-  if (code === "23505") {
-    return true;
-  }
-  return code === "P0001" && message.includes("duplicate_listing");
 }
 
 router.post("/listings", requireAuth, async (req, res, next) => {
@@ -88,10 +78,20 @@ router.post("/listings", requireAuth, async (req, res, next) => {
     await requireWhatsappNumber(authToken, userId);
   } catch (profileStatusError: any) {
     if (String(profileStatusError?.code ?? "") === "WHATSAPP_REQUIRED") {
-      return res.status(403).json({ ok: false, error: "WHATSAPP_REQUIRED" });
+      return res.status(403).json({
+        ok: false,
+        error: "WHATSAPP_REQUIRED",
+        message: "WhatsApp is required.",
+        marketKey: typeof req.body?.marketKey === "string" ? req.body.marketKey.trim().toLowerCase() : undefined
+      });
     }
     logDbError("profile_status", profileStatusError);
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
+    return res.status(500).json({
+      ok: false,
+      error: "unexpected_error",
+      message: "Unexpected listing creation error.",
+      marketKey: typeof req.body?.marketKey === "string" ? req.body.marketKey.trim().toLowerCase() : undefined
+    });
   }
 
   if (profile.role !== "seller") {
@@ -107,114 +107,84 @@ router.post("/listings", requireAuth, async (req, res, next) => {
     }
   }
 
-  const { data: duplicateRow, error: duplicateCheckError } = await supabase
-    .from("item_specs")
-    .select("listing_id,listings!inner(id)")
-    .eq("brand_id", parsed.brandId)
-    .eq("model_id", parsed.modelId)
-    .eq("year_id", parsed.yearId)
-    .eq("item_type_id", parsed.itemTypeId)
-    .eq("part_id", parsed.partId)
-    .eq("listings.seller_profile_id", userId)
-    .eq("listings.listing_type", "sell")
-    .eq("listings.status", "active")
-    .limit(1)
-    .maybeSingle();
-
-  if (duplicateCheckError) {
-    logDbError("duplicate_check", duplicateCheckError);
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  const marketKey = parsed.marketKey.trim().toLowerCase();
+  const requiresPrice = marketKey === "automotive";
+  if (requiresPrice && !parsed.price) {
+    return res.status(400).json({
+      ok: false,
+      error: "invalid_request",
+      message: "Payload validation failed.",
+      marketKey,
+      issues: [
+        {
+          path: "price",
+          code: "required_field_missing",
+          message: "Field \"price\" is required for this market."
+        }
+      ]
+    });
   }
 
-  if (duplicateRow) {
-    return res.status(409).json({ ok: false, error: "duplicate_listing" });
-  }
+  try {
+    const result = await createMarketAwareSellListing({
+      accessToken: authToken,
+      userId,
+      marketKey,
+      payload: req.body as Record<string, unknown>,
+      priceAmount: parsed.price?.amount,
+      priceType: parsed.price?.type,
+      location: parsed.location
+    });
 
-  const intentionSignature = [
-    parsed.brandId,
-    parsed.modelId,
-    parsed.yearId,
-    parsed.itemTypeId,
-    parsed.partId
-  ].join("|");
-
-  const listingId = randomUUID();
-  const listingPayload = {
-    id: listingId,
-    listing_type: "sell",
-    status: "active",
-    seller_profile_id: userId,
-    intention_signature: intentionSignature
-  };
-  const { error: listingError } = await supabase
-    .from("listings")
-    .insert(listingPayload);
-
-  if (listingError) {
-    logDbError("insert_listings", listingError);
-    if (isDuplicateListingError(listingError)) {
-      return res.status(409).json({ ok: false, error: "duplicate_listing" });
-    }
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  const itemSpecsPayload = {
-    listing_id: listingId,
-    brand_id: parsed.brandId,
-    model_id: parsed.modelId,
-    year_id: parsed.yearId,
-    item_type_id: parsed.itemTypeId,
-    part_id: parsed.partId
-  };
-  const { error: specError } = await supabase.from("item_specs").insert(itemSpecsPayload);
-
-  if (specError) {
-    logDbError("insert_item_specs", specError);
-    if (isDuplicateListingError(specError)) {
-      return res.status(409).json({ ok: false, error: "duplicate_listing" });
-    }
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  const pricingPayload = {
-    listing_id: listingId,
-    price_amount: parsed.price.amount,
-    price_type: parsed.price.type,
-    currency: "USD"
-  };
-  const { error: pricingError } = await supabase.from("pricing").insert(pricingPayload);
-
-  if (pricingError) {
-    logDbError("insert_pricing", pricingError);
-    if (isDuplicateListingError(pricingError)) {
-      return res.status(409).json({ ok: false, error: "duplicate_listing" });
-    }
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  if (parsed.location) {
-    const locationPayload = {
-      listing_id: listingId,
-      department: parsed.location.department,
-      municipality: parsed.location.municipality
-    };
-    const { error: locationError } = await supabase
-      .from("listing_locations")
-      .insert(locationPayload);
-
-    if (locationError) {
-      logDbError("insert_listing_locations", locationError);
-      if (isDuplicateListingError(locationError)) {
-        return res.status(409).json({ ok: false, error: "duplicate_listing" });
+    return res.status(201).json({
+      ok: true,
+      data: { listingId: result.listingId }
+    });
+  } catch (error) {
+    if (error instanceof MarketListingCreationError) {
+      if (error.status === 400) {
+        return res.status(400).json({
+          ok: false,
+          error: "invalid_request",
+          message: "Payload validation failed.",
+          marketKey,
+          issues: error.issues ?? []
+        });
       }
-      return res.status(500).json({ ok: false, error: "unexpected_error" });
+      if (error.code === "duplicate_listing" && error.status === 409) {
+        return res.status(409).json({
+          ok: false,
+          error: "duplicate_listing",
+          message: "An active listing already exists for this signature.",
+          marketKey
+        });
+      }
+      if (error.code === "partial_cleanup_failed") {
+        logDbError("market_listing_creation_cleanup", error);
+        return res.status(500).json({
+          ok: false,
+          error: "partial_cleanup_failed",
+          message: error.message,
+          marketKey
+        });
+      }
+      logDbError("market_listing_creation", error);
+      return res.status(500).json({
+        ok: false,
+        error: "unexpected_error",
+        message: "Unexpected listing creation error.",
+        marketKey
+      });
     }
-  }
 
-  return res.status(201).json({
-    ok: true,
-    data: { listingId }
-  });
+    logDbError("market_listing_creation", error);
+    return res.status(500).json({
+      ok: false,
+      error: "unexpected_error",
+      message: "Unexpected listing creation error.",
+      marketKey
+    });
+  }
 });
 
 router.patch("/listings/:listingId/status", requireAuth, async (req, res, next) => {

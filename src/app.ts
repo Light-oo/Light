@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import healthRoutes from "./routes/healthRoutes";
+import landingRoutes from "./routes/landingRoutes";
 import catalogRoutes from "./routes/catalogRoutes";
 import authRoutes from "./routes/authRoutes";
 import searchRoutes from "./routes/searchRoutes";
@@ -18,6 +19,7 @@ app.use(cors());
 app.use(requestId);
 
 app.use(healthRoutes);
+app.use(landingRoutes);
 app.use(catalogRoutes);
 app.use(authRoutes);
 app.use(searchRoutes);

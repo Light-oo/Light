@@ -1,55 +1,107 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
 import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
-import { useAuth } from "../auth/AuthContext";
+import { useMarket } from "../context/MarketContext";
 import { toUiErrorMessage } from "../lib/errorMessages";
+import {
+  formatHomeServicesNarrative,
+  formatMarketDemandIdentity,
+  isHomeServicesIdentity
+} from "../lib/listingDisplay";
+import {
+  buildDependencyMaps,
+  dependencyQueryForField,
+  hasDependencyParentsSelected,
+  normalizeMarketDependencies,
+  normalizeMarketFields,
+  resetDependentValues,
+  resolveOrderedFlowFields,
+  type MarketDependency,
+  type MarketFieldDefinition
+} from "../lib/marketForm";
 import { type Option } from "../lib/marketOptions";
+import { mapFieldOptionsForUi } from "../lib/travelRangeOptions";
 
-type OptionResponse = {
+type MarketDefinitionResponse = {
   ok: true;
   data: {
-    options: Array<{ id: string; label_es: string }>;
-  };
-};
-
-type ModelsResponse = {
-  ok: true;
-  data: {
-    brand_id?: string;
-    options: Array<{ id: string; label_es: string }>;
-  };
-};
-
-type SearchDemandsResponse = {
-  ok: true;
-  data: {
-    results: Array<{
-      cardType: "buy";
-      demandId: string;
-      what: {
-        brandId: string;
-        modelId: string;
-        yearId: string;
-        itemTypeId: string;
-        partId: string;
-      };
-      request: {
-        detailsText?: string | null;
-      };
-      audit: {
-        createdAt: string;
-        requesterUserId: string;
-        status: string;
-      };
+    market: {
+      key: string;
+      label: string;
+      active: boolean;
+    };
+    fields: Array<{
+      key: string;
+      label?: string;
+      label_es?: string;
+      required?: boolean;
+      order?: number;
+      sortOrder?: number;
+      type?: string | null;
+      inputType?: string;
+      input_type?: string;
+      allowedInBuy?: boolean;
+      allowed_in_buy?: boolean;
+      allowedInSell?: boolean;
+      allowed_in_sell?: boolean;
     }>;
-    page: number;
-    pageSize: number;
-    total: number;
+    dependencies?: Array<{
+      fieldKey?: string;
+      field_key?: string;
+      dependsOnFieldKey?: string;
+      depends_on_field_key?: string;
+      order?: number;
+      sortOrder?: number;
+    }>;
   };
 };
 
-type DemandRevealResponse = {
+type MarketFieldOptionsResponse = {
+  ok: true;
+  data: {
+    options: Array<{ id: string; key?: string; label?: string; label_es?: string }>;
+  };
+};
+
+type DemandSearchResult = {
+  id: string;
+  marketKey: string;
+  identityValues: Record<string, string>;
+  signature: string;
+  status: string;
+  created_at: string;
+  type: "buy";
+  request?: {
+    detailsText?: string | null;
+  };
+  location?: {
+    department?: string | null;
+  };
+  audit?: {
+    requesterUserId?: string | null;
+    createdAt?: string;
+  };
+};
+
+type DemandSearchResponse = {
+  ok: true;
+  marketKey?: string;
+  results?: DemandSearchResult[];
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  data?: {
+    marketKey?: string;
+    results?: DemandSearchResult[];
+    page?: number;
+    pageSize?: number;
+    total?: number;
+  };
+};
+
+type RevealResponse = {
   ok: true;
   data: {
     demandId: string;
@@ -58,215 +110,439 @@ type DemandRevealResponse = {
   };
 };
 
-const initialForm = {
-  brandId: "",
-  modelId: "",
-  yearId: "",
-  itemTypeId: "",
-  partId: ""
-};
+function normalizeDemandSearchResponse(payload: DemandSearchResponse) {
+  if (payload.ok !== true) {
+    throw new Error("invalid_demand_search_response");
+  }
+
+  if (Array.isArray(payload.results)) {
+    return {
+      results: payload.results,
+      page: Number(payload.page ?? 1),
+      pageSize: Number(payload.pageSize ?? 20),
+      total: Number(payload.total ?? payload.results.length)
+    };
+  }
+
+  if (Array.isArray(payload.data?.results)) {
+    return {
+      results: payload.data.results,
+      page: Number(payload.data.page ?? payload.page ?? 1),
+      pageSize: Number(payload.data.pageSize ?? payload.pageSize ?? 20),
+      total: Number(payload.data.total ?? payload.total ?? payload.data.results.length)
+    };
+  }
+
+  throw new Error("invalid_demand_search_response");
+}
+
+function formatWhen(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) {
+    return "hace un momento";
+  }
+  if (minutes < 60) {
+    return `hace ${minutes} minutos`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `hace ${hours} horas`;
+  }
+  const days = Math.round(hours / 24);
+  if (days < 7) {
+    return `hace ${days} dias`;
+  }
+  return date.toLocaleString();
+}
+
+function formatCardLocation(department?: string | null) {
+  const normalized = String(department ?? "").trim();
+  return normalized || "El Salvador";
+}
 
 export function SellDemandsPage() {
   const { api, token, userId } = useAuth();
-  const [brandOptions, setBrandOptions] = useState<Option[]>([]);
-  const [modelOptions, setModelOptions] = useState<Option[]>([]);
-  const [modelLabelById, setModelLabelById] = useState<Record<string, string>>({});
-  const [loadedModelBrandIds, setLoadedModelBrandIds] = useState<Record<string, true>>({});
-  const [yearOptions, setYearOptions] = useState<Option[]>([]);
-  const [itemTypeOptions, setItemTypeOptions] = useState<Option[]>([]);
-  const [partOptions, setPartOptions] = useState<Option[]>([]);
-  const [partLabelById, setPartLabelById] = useState<Record<string, string>>({});
-  const [loadedPartItemTypeIds, setLoadedPartItemTypeIds] = useState<Record<string, true>>({});
-  const [form, setForm] = useState(initialForm);
-  const [searchRequest, setSearchRequest] = useState<typeof initialForm | null>(null);
+  const { marketKey, availableMarkets, setMarket } = useMarket();
+
+  const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
+  const [marketDependencies, setMarketDependencies] = useState<MarketDependency[]>([]);
+  const [marketDefinitionLoaded, setMarketDefinitionLoaded] = useState(false);
+  const [marketDefinitionKey, setMarketDefinitionKey] = useState<string | null>(null);
+
+  const [optionsByFieldKey, setOptionsByFieldKey] = useState<Record<string, Option[]>>({});
+  const [structuredValues, setStructuredValues] = useState<Record<string, string>>({});
   const [searched, setSearched] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<SearchDemandsResponse["data"]["results"]>([]);
+  const [searchRequest, setSearchRequest] = useState<Record<string, string> | null>(null);
+  const [results, setResults] = useState<DemandSearchResult[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
-  const [collapseAfterSearch, setCollapseAfterSearch] = useState(false);
   const [revealState, setRevealState] = useState<
     Record<string, { loading: boolean; whatsappUrl?: string; didConsume?: boolean; error?: string }>
   >({});
 
-  useEffect(() => {
-    if (!token) {
-      return;
-    }
+  const optionCacheRef = useRef<Record<string, Option[]>>({});
+  const optionsInFlightRef = useRef<Record<string, Promise<Option[]>>>({});
+  const dependencySignatureRef = useRef<Record<string, string>>({});
 
-    api.get<OptionResponse>("/catalog/brands")
-      .then((response) => {
-        setBrandOptions(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
-      })
-      .catch((err) => setError(toUiErrorMessage(err)));
-
-    api.get<OptionResponse>("/catalog/years")
-      .then((response) => {
-        setYearOptions(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
-      })
-      .catch((err) => setError(toUiErrorMessage(err)));
-
-    api.get<OptionResponse>("/catalog/item-types")
-      .then((response) => {
-        setItemTypeOptions(response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es })));
-      })
-      .catch((err) => setError(toUiErrorMessage(err)));
-  }, [api, token]);
+  const marketOptions = useMemo<Option[]>(
+    () => availableMarkets.map((market) => ({ id: market.key, label: market.label })),
+    [availableMarkets]
+  );
 
   useEffect(() => {
-    if (!form.brandId) {
-      setModelOptions([]);
-      return;
-    }
-    api.get<ModelsResponse>("/catalog/models", { brandId: form.brandId })
-      .then((response) => {
-        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
-        setModelOptions(options);
-        setModelLabelById((current) => {
-          const next = { ...current };
-          for (const opt of options) {
-            next[opt.id] = opt.label;
-          }
-          return next;
-        });
-        setLoadedModelBrandIds((current) => ({ ...current, [form.brandId]: true }));
-      })
-      .catch((err) => {
-        setModelOptions([]);
-        setError(toUiErrorMessage(err));
-      });
-  }, [api, form.brandId]);
+    setMarketDefinitionLoaded(false);
+    setMarketDefinitionKey(null);
+    setMarketFields([]);
+    setMarketDependencies([]);
+    setOptionsByFieldKey({});
+    setStructuredValues({});
+    setSearched(false);
+    setSearchRequest(null);
+    setResults([]);
+    setPage(1);
+    setPageSize(20);
+    setTotal(0);
+    setError(null);
+    setMessage(null);
+    setRevealState({});
+    optionCacheRef.current = {};
+    optionsInFlightRef.current = {};
+    dependencySignatureRef.current = {};
+  }, [marketKey]);
 
   useEffect(() => {
-    const missingBrandIds = Array.from(
-      new Set(
-        results
-          .map((card) => card.what.brandId)
-          .filter((brandId) => Boolean(brandId) && !loadedModelBrandIds[brandId])
-      )
-    );
-
-    if (missingBrandIds.length === 0) {
+    if (!token || !marketKey) {
       return;
     }
 
     let cancelled = false;
+    const requestedMarketKey = marketKey;
 
-    Promise.all(
-      missingBrandIds.map((brandId) =>
-        api.get<ModelsResponse>("/catalog/models", { brandId })
-          .then((response) => ({ brandId, options: response.data.options }))
-          .catch(() => ({ brandId, options: [] as Array<{ id: string; label_es: string }> }))
-      )
-    ).then((responses) => {
-      if (cancelled) {
-        return;
-      }
-
-      setModelLabelById((current) => {
-        const next = { ...current };
-        for (const response of responses) {
-          for (const opt of response.options) {
-            next[opt.id] = opt.label_es;
-          }
+    api
+      .get<MarketDefinitionResponse>(`/catalog/markets/${encodeURIComponent(marketKey)}`)
+      .then((response) => {
+        if (cancelled || requestedMarketKey !== marketKey) {
+          return;
         }
-        return next;
-      });
-
-      setLoadedModelBrandIds((current) => {
-        const next = { ...current };
-        for (const response of responses) {
-          next[response.brandId] = true;
+        setMarketFields(normalizeMarketFields(response.data.fields));
+        setMarketDependencies(normalizeMarketDependencies(response.data.dependencies ?? []));
+        setMarketDefinitionLoaded(true);
+        setMarketDefinitionKey(requestedMarketKey);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
         }
-        return next;
+        setError(toUiErrorMessage(err));
+        setMarketDefinitionLoaded(false);
+        setMarketDefinitionKey(null);
       });
-    });
 
     return () => {
       cancelled = true;
     };
-  }, [api, loadedModelBrandIds, results]);
+  }, [api, marketKey, token]);
 
-  useEffect(() => {
-    if (!form.itemTypeId) {
-      setPartOptions([]);
-      return;
+  const sellFields = useMemo(
+    () => resolveOrderedFlowFields(marketFields, "SELL"),
+    [marketFields]
+  );
+
+  const dependencyMaps = useMemo(
+    () => buildDependencyMaps(marketDependencies),
+    [marketDependencies]
+  );
+
+  const sellFieldKeysSignature = useMemo(
+    () => sellFields.map((field) => field.key).join("|"),
+    [sellFields]
+  );
+
+  function getFieldLabel(field: MarketFieldDefinition) {
+    const key = field.key.toLowerCase();
+    if (key === "warranty") {
+      return "¿Da Garantía con su Trabajo?";
     }
-    api.get<OptionResponse>("/catalog/parts", { itemTypeId: form.itemTypeId })
-      .then((response) => {
-        const options = response.data.options.map((opt) => ({ id: opt.id, label: opt.label_es }));
-        setPartOptions(options);
-        setPartLabelById((current) => {
-          const next = { ...current };
-          for (const opt of options) {
-            next[opt.id] = opt.label;
-          }
-          return next;
-        });
-        setLoadedPartItemTypeIds((current) => ({ ...current, [form.itemTypeId]: true }));
+    if (key === "travel_range") {
+      return "¿Puede moverse entre?";
+    }
+    if (key === "detail") {
+      return "Detalles (opcional)";
+    }
+    if (key === "trade") {
+      return "Oficio";
+    }
+    if (key === "work_area") {
+      return "Zona de trabajo";
+    }
+    return field.label;
+  }
+
+  function buildOptionsCacheKey(
+    fieldKey: string,
+    dependencyQuery: Record<string, string>,
+    targetMarketKey: string
+  ) {
+    const dependencyKey = Object.entries(dependencyQuery)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => `${key}=${value}`)
+      .join("&");
+    return `${targetMarketKey}::${fieldKey}::${dependencyKey || "base"}`;
+  }
+
+  function areSameOptions(left: Option[], right: Option[]) {
+    if (left.length !== right.length) {
+      return false;
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      if (left[index]?.id !== right[index]?.id || left[index]?.label !== right[index]?.label) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function setFieldOptions(fieldKey: string, nextOptions: Option[]) {
+    setOptionsByFieldKey((current) => {
+      const previous = current[fieldKey] ?? [];
+      if (areSameOptions(previous, nextOptions)) {
+        return current;
+      }
+      return { ...current, [fieldKey]: nextOptions };
+    });
+  }
+
+  async function getOrLoadFieldOptions(fieldKey: string, dependencyQuery: Record<string, string>) {
+    const requestMarketKey = marketKey ?? "";
+    const cacheKey = buildOptionsCacheKey(fieldKey, dependencyQuery, requestMarketKey);
+    const cached = optionCacheRef.current[cacheKey];
+    if (cached) {
+      return cached;
+    }
+
+    const inFlight = optionsInFlightRef.current[cacheKey];
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const request = api
+      .get<MarketFieldOptionsResponse>(
+        `/catalog/markets/${encodeURIComponent(requestMarketKey)}/fields/${encodeURIComponent(fieldKey)}/options`,
+        dependencyQuery
+      )
+      .then((response) =>
+        mapFieldOptionsForUi(
+          fieldKey,
+          response.data.options
+          .map((option) => {
+            const key = String(option.key ?? "").trim();
+            if (!key) {
+              return null;
+            }
+            return {
+              id: key,
+              label: option.label_es ?? option.label ?? key
+            } satisfies Option;
+          })
+          .filter((option): option is Option => option !== null)
+        )
+      )
+      .then((options) => {
+        optionCacheRef.current[cacheKey] = options;
+        return options;
       })
-      .catch((err) => {
-        setPartOptions([]);
-        setError(toUiErrorMessage(err));
+      .finally(() => {
+        delete optionsInFlightRef.current[cacheKey];
       });
-  }, [api, form.itemTypeId]);
+
+    optionsInFlightRef.current[cacheKey] = request;
+    return request;
+  }
 
   useEffect(() => {
-    const missingItemTypeIds = Array.from(
-      new Set(
-        results
-          .map((card) => card.what.itemTypeId)
-          .filter((itemTypeId) => Boolean(itemTypeId) && !loadedPartItemTypeIds[itemTypeId])
-      )
-    );
+    optionCacheRef.current = {};
+    optionsInFlightRef.current = {};
+    dependencySignatureRef.current = {};
+    setOptionsByFieldKey({});
+  }, [marketKey, sellFieldKeysSignature]);
 
-    if (missingItemTypeIds.length === 0) {
+  useEffect(() => {
+    if (
+      !token ||
+      !marketKey ||
+      !marketDefinitionLoaded ||
+      marketDefinitionKey !== marketKey ||
+      sellFields.length === 0
+    ) {
       return;
     }
 
     let cancelled = false;
-
-    Promise.all(
-      missingItemTypeIds.map((itemTypeId) =>
-        api.get<OptionResponse>("/catalog/parts", { itemTypeId })
-          .then((response) => ({ itemTypeId, options: response.data.options }))
-          .catch(() => ({ itemTypeId, options: [] as Array<{ id: string; label_es: string }> }))
-      )
-    ).then((responses) => {
-      if (cancelled) {
-        return;
+    const independentFields = sellFields.filter((field) => {
+      const inputType = field.inputType.toLowerCase();
+      if (inputType === "text" || inputType === "number") {
+        return false;
       }
-
-      setPartLabelById((current) => {
-        const next = { ...current };
-        for (const response of responses) {
-          for (const opt of response.options) {
-            next[opt.id] = opt.label_es;
-          }
-        }
-        return next;
-      });
-
-      setLoadedPartItemTypeIds((current) => {
-        const next = { ...current };
-        for (const response of responses) {
-          next[response.itemTypeId] = true;
-        }
-        return next;
-      });
+      return (dependencyMaps.parentKeysByChild[field.key]?.length ?? 0) === 0;
     });
 
+    async function loadIndependentOptions() {
+      for (const field of independentFields) {
+        try {
+          const options = await getOrLoadFieldOptions(field.key, {});
+          if (cancelled) {
+            return;
+          }
+          setFieldOptions(field.key, options);
+        } catch (err) {
+          if (cancelled) {
+            return;
+          }
+          setFieldOptions(field.key, []);
+          setError(toUiErrorMessage(err));
+        }
+      }
+    }
+
+    void loadIndependentOptions();
     return () => {
       cancelled = true;
     };
-  }, [api, loadedPartItemTypeIds, results]);
+  }, [
+    dependencyMaps.parentKeysByChild,
+    marketDefinitionLoaded,
+    marketDefinitionKey,
+    marketKey,
+    sellFields,
+    token
+  ]);
 
   useEffect(() => {
-    if (!searchRequest) {
+    if (
+      !token ||
+      !marketKey ||
+      !marketDefinitionLoaded ||
+      marketDefinitionKey !== marketKey ||
+      sellFields.length === 0
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const dependentFields = sellFields.filter((field) => {
+      const inputType = field.inputType.toLowerCase();
+      if (inputType === "text" || inputType === "number") {
+        return false;
+      }
+      return (dependencyMaps.parentKeysByChild[field.key]?.length ?? 0) > 0;
+    });
+
+    async function loadDependentOptions() {
+      for (const field of dependentFields) {
+        const parentKeys = dependencyMaps.parentKeysByChild[field.key] ?? [];
+        const signature = parentKeys
+          .map((parentKey) => `${parentKey}=${structuredValues[parentKey] ?? ""}`)
+          .join("|");
+
+        if (dependencySignatureRef.current[field.key] === signature) {
+          continue;
+        }
+        dependencySignatureRef.current[field.key] = signature;
+
+        const dependenciesReady = hasDependencyParentsSelected(
+          field.key,
+          structuredValues,
+          dependencyMaps.parentKeysByChild
+        );
+
+        if (!dependenciesReady) {
+          setFieldOptions(field.key, []);
+          continue;
+        }
+
+        const dependencyQuery = dependencyQueryForField(
+          field.key,
+          structuredValues,
+          dependencyMaps.parentKeysByChild
+        );
+
+        try {
+          const options = await getOrLoadFieldOptions(field.key, dependencyQuery);
+          if (cancelled) {
+            return;
+          }
+          setFieldOptions(field.key, options);
+        } catch (err) {
+          if (cancelled) {
+            return;
+          }
+          setFieldOptions(field.key, []);
+          setError(toUiErrorMessage(err));
+        }
+      }
+    }
+
+    void loadDependentOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    dependencyMaps.parentKeysByChild,
+    marketDefinitionLoaded,
+    marketDefinitionKey,
+    marketKey,
+    sellFields,
+    structuredValues,
+    token
+  ]);
+
+  function isFieldDisabled(fieldKey: string) {
+    return !hasDependencyParentsSelected(
+      fieldKey,
+      structuredValues,
+      dependencyMaps.parentKeysByChild
+    );
+  }
+
+  function optionsForField(fieldKey: string) {
+    return optionsByFieldKey[fieldKey] ?? [];
+  }
+
+  function updateField(fieldKey: string, value: string) {
+    setMessage(null);
+    setError(null);
+
+    setStructuredValues((current) => {
+      const next = value ? { ...current, [fieldKey]: value } : { ...current };
+      if (!value) {
+        delete next[fieldKey];
+      }
+      return resetDependentValues(fieldKey, next, dependencyMaps.childKeysByParent);
+    });
+  }
+
+  function onSearch(event: FormEvent) {
+    event.preventDefault();
+    if (loading || !marketKey) {
+      return;
+    }
+
+    setSearched(true);
+    setPage(1);
+    setSearchRequest({ ...structuredValues });
+  }
+
+  useEffect(() => {
+    if (!searchRequest || !marketKey) {
       return;
     }
 
@@ -274,122 +550,56 @@ export function SellDemandsPage() {
     setError(null);
     setMessage(null);
 
-    api.get<SearchDemandsResponse>("/search/demands", {
+    const query: Record<string, string | number | undefined> = {
+      mode: "SELL",
+      marketKey,
       page,
-      pageSize,
-      brandId: searchRequest.brandId || undefined,
-      modelId: searchRequest.modelId || undefined,
-      yearId: searchRequest.yearId || undefined,
-      itemTypeId: searchRequest.itemTypeId || undefined,
-      partId: searchRequest.partId || undefined
-    })
+      pageSize
+    };
+    for (const [fieldKey, value] of Object.entries(searchRequest)) {
+      if (value) {
+        query[fieldKey] = value;
+      }
+    }
+
+    api
+      .get<DemandSearchResponse>("/search/listings", query)
       .then((response) => {
-        setResults(response.data.results);
-        setPageSize(response.data.pageSize);
-        setTotal(response.data.total);
-        if (collapseAfterSearch) {
-          setFiltersExpanded(false);
-          setCollapseAfterSearch(false);
-        }
-        if (response.data.results.length === 0) {
-          setMessage("No active demand found.");
+        const normalized = normalizeDemandSearchResponse(response);
+        setResults(normalized.results);
+        setPageSize(normalized.pageSize);
+        setTotal(normalized.total);
+        if (normalized.results.length === 0) {
+          setMessage("No hay búsquedas activas.");
         }
       })
       .catch((err) => {
-        if (collapseAfterSearch) {
-          setCollapseAfterSearch(false);
-        }
         setError(toUiErrorMessage(err));
       })
-      .finally(() => setLoading(false));
-  }, [api, page, pageSize, searchRequest, collapseAfterSearch]);
-
-  const labelMaps = useMemo(() => {
-    const toMap = (options: Option[]) => new Map(options.map((opt) => [opt.id, opt.label]));
-    return {
-      brands: toMap(brandOptions),
-      models: toMap(modelOptions),
-      years: toMap(yearOptions),
-      itemTypes: toMap(itemTypeOptions),
-      parts: toMap(partOptions)
-    };
-  }, [brandOptions, modelOptions, yearOptions, itemTypeOptions, partOptions]);
-
-  function updateField(field: keyof typeof initialForm, value: string) {
-    setForm((current) => {
-      if (field === "brandId") {
-        return { ...current, brandId: value, modelId: "" };
-      }
-      if (field === "itemTypeId") {
-        return { ...current, itemTypeId: value, partId: "" };
-      }
-      return { ...current, [field]: value };
-    });
-  }
-
-  function onSearch(event: FormEvent) {
-    event.preventDefault();
-    if (loading) {
-      return;
-    }
-    setSearched(true);
-    setPage(1);
-    setSearchRequest({ ...form });
-  }
-
-  function onHeaderAction() {
-    if (loading) {
-      return;
-    }
-    if (!filtersExpanded) {
-      setFiltersExpanded(true);
-      return;
-    }
-    setSearched(true);
-    setPage(1);
-    setCollapseAfterSearch(true);
-    setSearchRequest({ ...form });
-  }
-
-  const canGoNext = page * pageSize < total;
-
-  function formatWhen(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return "-";
-    }
-    const diffMs = Date.now() - date.getTime();
-    const minutes = Math.round(diffMs / 60000);
-    if (minutes < 1) {
-      return "Hace un momento";
-    }
-    if (minutes < 60) {
-      return `Hace ${minutes} min`;
-    }
-    const hours = Math.round(minutes / 60);
-    if (hours < 24) {
-      return `Hace ${hours} h`;
-    }
-    const days = Math.round(hours / 24);
-    if (days < 7) {
-      return `Hace ${days} dias`;
-    }
-    return date.toLocaleString();
-  }
-
-  function safeLabel(map: Map<string, string>, id: string, fallback: string) {
-    return map.get(id) ?? fallback;
-  }
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [api, marketKey, page, pageSize, searchRequest]);
 
   async function onReveal(demandId: string) {
     if (revealState[demandId]?.loading || revealState[demandId]?.whatsappUrl) {
       return;
     }
 
-    setRevealState((current) => ({ ...current, [demandId]: { loading: true } }));
+    setRevealState((current) => ({
+      ...current,
+      [demandId]: {
+        loading: true
+      }
+    }));
 
     try {
-      const response = await api.post<DemandRevealResponse>("/contact-access", { demandId }, { suppressGlobalLoader: true });
+      const response = await api.post<RevealResponse>(
+        "/contact-access",
+        { demandId },
+        { suppressGlobalLoader: true }
+      );
+
       setRevealState((current) => ({
         ...current,
         [demandId]: {
@@ -409,99 +619,114 @@ export function SellDemandsPage() {
     }
   }
 
+  const canGoNext = page * pageSize < total;
+
   return (
     <div className="screen stack gap-lg">
-      {!filtersExpanded ? (
-        <button
-          type="button"
-          className="ghost demand-refine-button"
-          onClick={onHeaderAction}
-          disabled={loading}
-        >
-          Refinar búsqueda
-        </button>
-      ) : null}
-
-      <div className={`collapsible-panel${filtersExpanded ? "" : " is-collapsed"}`}>
-        <Card className="stack">
-          <form onSubmit={onSearch} className="stack">
+      <Card className="stack">
+        <form className="stack" onSubmit={onSearch}>
           <FilterSelect
-            label="Marca"
-            value={form.brandId}
-            options={brandOptions}
-            onChange={(value) => updateField("brandId", value)}
-            placeholder="Selecciona"
+            label="Mercado"
+            value={marketKey ?? ""}
+            options={marketOptions}
+            required
+            disabled={false}
+            onChange={(value) => {
+              if (value) {
+                setMarket(value);
+              }
+            }}
           />
 
-          <FilterSelect
-            label="Modelo"
-            value={form.modelId}
-            options={modelOptions}
-            onChange={(value) => updateField("modelId", value)}
-            disabled={!form.brandId}
-            placeholder="Selecciona"
-          />
+          {marketKey ? sellFields.map((field) => {
+            const inputType = field.inputType.toLowerCase();
+            if (inputType === "text" || inputType === "number") {
+              return (
+                <label key={field.key}>
+                  {getFieldLabel(field)}
+                  <input
+                    type={inputType}
+                    value={structuredValues[field.key] ?? ""}
+                    disabled={isFieldDisabled(field.key)}
+                    onChange={(event) => updateField(field.key, event.target.value)}
+                  />
+                </label>
+              );
+            }
 
-          <FilterSelect
-            label="Año"
-            value={form.yearId}
-            options={yearOptions}
-            onChange={(value) => updateField("yearId", value)}
-            placeholder="Selecciona"
-          />
+            return (
+              <FilterSelect
+                key={field.key}
+                label={getFieldLabel(field)}
+                value={structuredValues[field.key] ?? ""}
+                options={optionsForField(field.key)}
+                disabled={isFieldDisabled(field.key)}
+                onChange={(value) => updateField(field.key, value)}
+                placeholder={field.key === "travel_range" ? "Selecciona" : "Todos/as"}
+              />
+            );
+          }) : null}
 
-          <FilterSelect
-            label="Sistema"
-            value={form.itemTypeId}
-            options={itemTypeOptions}
-            onChange={(value) => updateField("itemTypeId", value)}
-            placeholder="Selecciona"
-          />
-
-          <FilterSelect
-            label="Pieza"
-            value={form.partId}
-            options={partOptions}
-            onChange={(value) => updateField("partId", value)}
-            disabled={!form.itemTypeId}
-            placeholder="Selecciona"
-          />
-          <button type="button" className="ghost" onClick={onHeaderAction} disabled={loading}>
-            Buscar
+          <button type="submit" disabled={!marketKey || loading}>
+            {loading ? "Buscando..." : "Ver Búsquedas"}
           </button>
-          </form>
-        </Card>
-      </div>
+        </form>
+      </Card>
 
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
-      {searched && !loading && results.length === 0 ? (
+      {searched && !loading && results.length === 0 && !message ? (
         <Card>
-          <p>No active demand found.</p>
+          <p>No hay búsquedas activas.</p>
         </Card>
       ) : null}
 
-      {results.map((card) => (
-        <article key={card.demandId} className="card stack card-elevated demand-card-compact">
-          <h3>
-            {`${partLabelById[card.what.partId] ?? "—"} PARA ${safeLabel(labelMaps.brands, card.what.brandId, "—")} ${modelLabelById[card.what.modelId] ?? "—"} ${safeLabel(labelMaps.years, card.what.yearId, "—")}`.toUpperCase()}
-          </h3>
-          {card.request.detailsText ? (
-            <p><strong>Detalle:</strong> {card.request.detailsText}</p>
-          ) : null}
-          <p><strong>Creado:</strong> {formatWhen(card.audit.createdAt)}</p>
-          {card.audit.requesterUserId === userId ? (
-            <p className="info">This is your demand.</p>
-          ) : (
-            <RevealButton
-              loading={revealState[card.demandId]?.loading}
-              whatsappUrl={revealState[card.demandId]?.whatsappUrl}
-              error={revealState[card.demandId]?.error}
-              onReveal={() => onReveal(card.demandId)}
-            />
-          )}
-        </article>
-      ))}
+      {results.map((card) => {
+        const identityLine = formatMarketDemandIdentity({
+          orderedFields: sellFields,
+          values: card.identityValues,
+          separator: " - "
+        });
+        const createdAt = card.created_at || card.audit?.createdAt || "";
+        const location = formatCardLocation(card.location?.department);
+        const narrative = isHomeServicesIdentity(card.identityValues)
+          ? formatHomeServicesNarrative({
+              intent: "BUY",
+              identityValues: card.identityValues,
+              locationDepartment: card.location?.department
+            })
+          : null;
+        const requesterUserId = String(card.audit?.requesterUserId ?? "").trim();
+        const reveal = revealState[card.id];
+
+        return (
+          <article key={card.id} className="card stack card-elevated demand-card-compact">
+            <p><strong>Busco</strong></p>
+            {narrative ? (
+              <>
+                <p>{narrative.headline}</p>
+                <p>{narrative.locationLine}</p>
+              </>
+            ) : (
+              <>
+                <p>{identityLine}</p>
+                <p>{location}</p>
+              </>
+            )}
+            <p>Creado: {formatWhen(createdAt)}</p>
+            {requesterUserId && requesterUserId === userId ? (
+              <p className="info">Esta es su búsqueda.</p>
+            ) : (
+              <RevealButton
+                loading={reveal?.loading}
+                whatsappUrl={reveal?.whatsappUrl}
+                error={reveal?.error}
+                onReveal={() => onReveal(card.id)}
+              />
+            )}
+          </article>
+        );
+      })}
 
       {searched ? (
         <div className="pager">
@@ -510,15 +735,15 @@ export function SellDemandsPage() {
             onClick={() => setPage((prev) => Math.max(1, prev - 1))}
             disabled={page === 1 || loading}
           >
-            Prev
+            Anterior
           </button>
-          <span>Page {page}</span>
+          <span>Página {page}</span>
           <button
             type="button"
             onClick={() => setPage((prev) => prev + 1)}
             disabled={loading || !canGoNext}
           >
-            Next
+            Siguiente
           </button>
         </div>
       ) : null}

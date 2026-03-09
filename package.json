@@ -8,7 +8,8 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "build": "tsc",
     "build:frontend": "npm --prefix frontend run build",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test:engine:integration": "node dist/tests/engineIntegration.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

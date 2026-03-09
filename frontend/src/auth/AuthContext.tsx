@@ -13,7 +13,12 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, confirmPassword: string, whatsapp: string) => Promise<void>;
+  signUp: (
+    email: string,
+    password: string,
+    confirmPassword: string,
+    tosAccepted: boolean
+  ) => Promise<void>;
   signOut: () => void;
   api: ReturnType<typeof createApiClient>;
   isGlobalLoading: boolean;
@@ -109,17 +114,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [establishSession, setLoading]);
 
-  const signUp = useCallback(async (email: string, password: string, confirmPassword: string, whatsapp: string) => {
+  const signUp = useCallback(async (
+    email: string,
+    password: string,
+    confirmPassword: string,
+    tosAccepted: boolean
+  ) => {
     setLoading(true);
     try {
       const response = await api.post<{ ok: true; data: { access_token: string } }>("/auth/signup", {
         email: email.trim(),
         password,
         confirm_password: confirmPassword,
-        whatsapp
+        tos_accepted: tosAccepted
       });
 
       await establishSession(response.data.access_token, email.trim());
+      try {
+        await api.patch("/api/me", {
+          tos_accepted: tosAccepted
+        });
+      } catch {
+        // Non-blocking: account is already created; backend support may roll out independently.
+      }
     } finally {
       setLoading(false);
     }
