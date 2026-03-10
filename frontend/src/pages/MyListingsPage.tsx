@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useMarket } from "../context/MarketContext";
+import { useProfileStatus } from "../context/ProfileStatusContext";
 import { Card } from "../components/Card";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
@@ -23,14 +24,6 @@ import {
   type MyDemandRow,
   type MyListingRow
 } from "../lib/supabaseData";
-
-type ProfileStatusResponse = {
-  ok: true;
-  data: {
-    departmentId: number | null;
-    departmentName: string | null;
-  };
-};
 
 type MarketDefinitionResponse = {
   ok: true;
@@ -158,7 +151,6 @@ function ListingGroup({
   return (
     <Card className="stack">
       <h3 className="section-title">{title}</h3>
-      {rows.length === 0 ? <p>No hay publicaciones en este grupo.</p> : null}
       {rows.map((row) => {
         const specs = row.item_specs;
         const signatureIdentity = parseSignatureIdentityValues((row as any).intention_signature);
@@ -187,7 +179,7 @@ function ListingGroup({
           : null;
         return (
           <article key={row.id} className="card stack listing-row">
-            <p><strong>Vendo</strong></p>
+            <p><strong>{narrative ? "Ofrezco" : "Vendo"}</strong></p>
             {narrative ? (
               <>
                 <p>{narrative.headline}</p>
@@ -234,7 +226,6 @@ function DemandGroup({
   return (
     <Card className="stack">
       <h3 className="section-title">{title}</h3>
-      {rows.length === 0 ? <p>No hay publicaciones en este grupo.</p> : null}
       {rows.map((row) => {
         const signatureIdentity = parseSignatureIdentityValues((row as any).intention_signature);
         const displayFields =
@@ -288,11 +279,11 @@ function DemandGroup({
 
 export function MyListingsPage() {
   const { api, token, userId } = useAuth();
+  const { profileStatus } = useProfileStatus();
   const { marketKey } = useMarket();
   const [rows, setRows] = useState<MyListingRow[]>([]);
   const [demands, setDemands] = useState<MyDemandRow[]>([]);
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
-  const [departmentName, setDepartmentName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [togglingById, setTogglingById] = useState<Record<string, boolean>>({});
   const [togglingDemandById, setTogglingDemandById] = useState<Record<string, boolean>>({});
@@ -317,19 +308,6 @@ export function MyListingsPage() {
   useEffect(() => {
     load();
   }, [token, userId]);
-
-  useEffect(() => {
-    if (!token) {
-      return;
-    }
-
-    api.get<ProfileStatusResponse>("/profile/status")
-      .then((response) => {
-        const nextDepartmentName = String(response.data.departmentName ?? "").trim();
-        setDepartmentName(nextDepartmentName || null);
-      })
-      .catch((err) => setError(toUiErrorMessage(err)));
-  }, [api, token]);
 
   useEffect(() => {
     if (!token || !marketKey) {
@@ -421,7 +399,7 @@ export function MyListingsPage() {
     () => resolveOrderedFlowFields(marketFields, "BUY"),
     [marketFields]
   );
-  const locationLabel = formatCardLocation(departmentName);
+  const locationLabel = formatCardLocation(profileStatus?.departmentName ?? null);
 
   return (
     <div className="screen stack gap-lg">

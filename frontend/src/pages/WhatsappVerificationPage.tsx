@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useProfileStatus } from "../context/ProfileStatusContext";
 import { ApiError } from "../lib/apiClient";
 import { WhatsappSvInput } from "../components/WhatsappSvInput";
 import { toUiErrorMessage } from "../lib/errorMessages";
@@ -13,14 +14,6 @@ import {
   parseWhatsappE164,
   type WhatsappCountry
 } from "../lib/whatsappCountries";
-
-type ProfileStatusResponse = {
-  ok: true;
-  data: {
-    whatsappE164: string | null;
-    whatsappVerificationStatus?: "missing" | "pending" | "verified" | null;
-  };
-};
 
 type StartWhatsappVerificationResponse = {
   ok: true;
@@ -35,11 +28,11 @@ const verificationWhatsappDigits = "50376283646";
 
 export function WhatsappVerificationPage() {
   const { token, email, api } = useAuth();
+  const { profileStatus, loading: loadingProfileStatus, refreshProfileStatus } = useProfileStatus();
   const navigate = useNavigate();
   const [whatsappLocal, setWhatsappLocal] = useState("");
   const [selectedWhatsappCountry, setSelectedWhatsappCountry] = useState<WhatsappCountry>(defaultWhatsappCountry);
   const [loading, setLoading] = useState(false);
-  const [checkingStatus, setCheckingStatus] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
@@ -57,35 +50,19 @@ export function WhatsappVerificationPage() {
   }
 
   useEffect(() => {
-    let cancelled = false;
-    setCheckingStatus(true);
-    api
-      .get<ProfileStatusResponse>("/profile/status", undefined, { suppressGlobalLoader: true })
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        const parsedWhatsapp = parseWhatsappE164(response.data.whatsappE164 ?? null);
-        setWhatsappLocal(parsedWhatsapp.localNumber);
-        setSelectedWhatsappCountry(parsedWhatsapp.country);
-        if (response.data.whatsappVerificationStatus === "verified") {
-          navigate("/search", { replace: true });
-          return;
-        }
-        setCheckingStatus(false);
-      })
-      .catch((err) => {
-        if (cancelled) {
-          return;
-        }
-        setError(toUiErrorMessage(err));
-        setCheckingStatus(false);
-      });
+    if (loadingProfileStatus) {
+      return;
+    }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [api, navigate]);
+    if (profileStatus?.whatsappVerificationStatus === "verified") {
+      navigate("/search", { replace: true });
+      return;
+    }
+
+    const parsedWhatsapp = parseWhatsappE164(profileStatus?.whatsappE164 ?? null);
+    setWhatsappLocal(parsedWhatsapp.localNumber);
+    setSelectedWhatsappCountry(parsedWhatsapp.country);
+  }, [loadingProfileStatus, navigate, profileStatus?.whatsappE164, profileStatus?.whatsappVerificationStatus]);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -122,6 +99,7 @@ export function WhatsappVerificationPage() {
         window.location.href = whatsappUrl;
       }
 
+      await refreshProfileStatus();
       setInfo("Se abrio WhatsApp para enviar su verificacion. Espere confirmacion del equipo Light.");
     } catch (err) {
       if (err instanceof ApiError) {
@@ -134,7 +112,7 @@ export function WhatsappVerificationPage() {
     }
   }
 
-  if (checkingStatus) {
+  if (loadingProfileStatus) {
     return <div className="screen auth-screen" />;
   }
 

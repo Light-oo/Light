@@ -5,6 +5,8 @@ import { AuthProvider } from "./auth/AuthContext";
 import { App } from "./App";
 import { LoadingProvider } from "./context/LoadingContext";
 import { MarketProvider } from "./context/MarketContext";
+import { OptionsProvider } from "./context/OptionsContext";
+import { ProfileStatusProvider } from "./context/ProfileStatusContext";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -12,9 +14,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <LoadingProvider>
       <BrowserRouter>
         <AuthProvider>
-          <MarketProvider>
-            <App />
-          </MarketProvider>
+          <ProfileStatusProvider>
+            <OptionsProvider>
+              <MarketProvider>
+                <App />
+              </MarketProvider>
+            </OptionsProvider>
+          </ProfileStatusProvider>
         </AuthProvider>
       </BrowserRouter>
     </LoadingProvider>

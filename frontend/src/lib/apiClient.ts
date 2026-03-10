@@ -56,6 +56,8 @@ async function parseJson(response: Response): Promise<ApiErrorPayload | null> {
 }
 
 export function createApiClient(config: ApiClientConfig) {
+  let profileStatusRequestInFlight: Promise<unknown> | null = null;
+
   async function request<T>(
     method: "GET" | "POST" | "PATCH",
     path: string,
@@ -66,42 +68,65 @@ export function createApiClient(config: ApiClientConfig) {
       suppressGlobalLoader?: boolean;
     }
   ): Promise<T> {
-    if (!options?.suppressGlobalLoader) {
-      config.onRequestStart?.();
-    }
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json"
-    };
+    const isProfileStatusRequest =
+      method === "GET" &&
+      path === "/profile/status" &&
+      options?.auth !== false &&
+      options?.query === undefined;
 
-    if (options?.auth !== false) {
-      const token = config.getToken();
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
+    if (isProfileStatusRequest && profileStatusRequestInFlight) {
+      return profileStatusRequestInFlight as Promise<T>;
     }
 
-    try {
-      const response = await fetch(buildUrl(config.baseUrl, path, options?.query), {
-        method,
-        headers,
-        body: options?.body ? JSON.stringify(options.body) : undefined
-      });
-
-      const payload = await parseJson(response);
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          config.onUnauthorized?.();
-        }
-        throw new ApiError(response.status, payload);
-      }
-
-      return (payload ?? {}) as T;
-    } finally {
+    const requestPromise = (async () => {
       if (!options?.suppressGlobalLoader) {
-        config.onRequestEnd?.();
+        config.onRequestStart?.();
       }
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+
+      if (options?.auth !== false) {
+        const token = config.getToken();
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+      }
+
+      try {
+        const response = await fetch(buildUrl(config.baseUrl, path, options?.query), {
+          method,
+          headers,
+          body: options?.body ? JSON.stringify(options.body) : undefined
+        });
+
+        const payload = await parseJson(response);
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            config.onUnauthorized?.();
+          }
+          throw new ApiError(response.status, payload);
+        }
+
+        return (payload ?? {}) as T;
+      } finally {
+        if (!options?.suppressGlobalLoader) {
+          config.onRequestEnd?.();
+        }
+      }
+    })();
+
+    if (isProfileStatusRequest) {
+      profileStatusRequestInFlight = requestPromise as Promise<unknown>;
+      requestPromise.finally(() => {
+        if (profileStatusRequestInFlight === requestPromise) {
+          profileStatusRequestInFlight = null;
+        }
+      });
     }
+
+    return requestPromise;
   }
 
   return {

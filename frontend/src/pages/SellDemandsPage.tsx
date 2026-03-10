@@ -1,9 +1,10 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
 import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
 import { useMarket } from "../context/MarketContext";
+import { useOptions } from "../context/OptionsContext";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
   formatHomeServicesNarrative,
@@ -55,13 +56,6 @@ type MarketDefinitionResponse = {
       order?: number;
       sortOrder?: number;
     }>;
-  };
-};
-
-type MarketFieldOptionsResponse = {
-  ok: true;
-  data: {
-    options: Array<{ id: string; key?: string; label?: string; label_es?: string }>;
   };
 };
 
@@ -167,6 +161,7 @@ function formatCardLocation(department?: string | null) {
 
 export function SellDemandsPage() {
   const { api, token, userId } = useAuth();
+  const { getOptions } = useOptions();
   const { marketKey, availableMarkets, setMarket } = useMarket();
 
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
@@ -189,10 +184,6 @@ export function SellDemandsPage() {
     Record<string, { loading: boolean; whatsappUrl?: string; didConsume?: boolean; error?: string }>
   >({});
 
-  const optionCacheRef = useRef<Record<string, Option[]>>({});
-  const optionsInFlightRef = useRef<Record<string, Promise<Option[]>>>({});
-  const dependencySignatureRef = useRef<Record<string, string>>({});
-
   const marketOptions = useMemo<Option[]>(
     () => availableMarkets.map((market) => ({ id: market.key, label: market.label })),
     [availableMarkets]
@@ -214,9 +205,6 @@ export function SellDemandsPage() {
     setError(null);
     setMessage(null);
     setRevealState({});
-    optionCacheRef.current = {};
-    optionsInFlightRef.current = {};
-    dependencySignatureRef.current = {};
   }, [marketKey]);
 
   useEffect(() => {
@@ -287,18 +275,6 @@ export function SellDemandsPage() {
     return field.label;
   }
 
-  function buildOptionsCacheKey(
-    fieldKey: string,
-    dependencyQuery: Record<string, string>,
-    targetMarketKey: string
-  ) {
-    const dependencyKey = Object.entries(dependencyQuery)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, value]) => `${key}=${value}`)
-      .join("&");
-    return `${targetMarketKey}::${fieldKey}::${dependencyKey || "base"}`;
-  }
-
   function areSameOptions(left: Option[], right: Option[]) {
     if (left.length !== right.length) {
       return false;
@@ -323,55 +299,29 @@ export function SellDemandsPage() {
 
   async function getOrLoadFieldOptions(fieldKey: string, dependencyQuery: Record<string, string>) {
     const requestMarketKey = marketKey ?? "";
-    const cacheKey = buildOptionsCacheKey(fieldKey, dependencyQuery, requestMarketKey);
-    const cached = optionCacheRef.current[cacheKey];
-    if (cached) {
-      return cached;
-    }
-
-    const inFlight = optionsInFlightRef.current[cacheKey];
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const request = api
-      .get<MarketFieldOptionsResponse>(
-        `/catalog/markets/${encodeURIComponent(requestMarketKey)}/fields/${encodeURIComponent(fieldKey)}/options`,
-        dependencyQuery
-      )
-      .then((response) =>
-        mapFieldOptionsForUi(
-          fieldKey,
-          response.data.options
-          .map((option) => {
-            const key = String(option.key ?? "").trim();
-            if (!key) {
-              return null;
-            }
-            return {
-              id: key,
-              label: option.label_es ?? option.label ?? key
-            } satisfies Option;
-          })
-          .filter((option): option is Option => option !== null)
-        )
-      )
-      .then((options) => {
-        optionCacheRef.current[cacheKey] = options;
-        return options;
-      })
-      .finally(() => {
-        delete optionsInFlightRef.current[cacheKey];
-      });
-
-    optionsInFlightRef.current[cacheKey] = request;
-    return request;
+    const rows = await getOptions({
+      marketKey: requestMarketKey,
+      fieldKey,
+      deps: dependencyQuery
+    });
+    return mapFieldOptionsForUi(
+      fieldKey,
+      rows
+        .map((option) => {
+          const key = String(option.key ?? "").trim();
+          if (!key) {
+            return null;
+          }
+          return {
+            id: key,
+            label: option.label_es ?? option.label ?? key
+          } satisfies Option;
+        })
+        .filter((option): option is Option => option !== null)
+    );
   }
 
   useEffect(() => {
-    optionCacheRef.current = {};
-    optionsInFlightRef.current = {};
-    dependencySignatureRef.current = {};
     setOptionsByFieldKey({});
   }, [marketKey, sellFieldKeysSignature]);
 
@@ -448,16 +398,6 @@ export function SellDemandsPage() {
 
     async function loadDependentOptions() {
       for (const field of dependentFields) {
-        const parentKeys = dependencyMaps.parentKeysByChild[field.key] ?? [];
-        const signature = parentKeys
-          .map((parentKey) => `${parentKey}=${structuredValues[parentKey] ?? ""}`)
-          .join("|");
-
-        if (dependencySignatureRef.current[field.key] === signature) {
-          continue;
-        }
-        dependencySignatureRef.current[field.key] = signature;
-
         const dependenciesReady = hasDependencyParentsSelected(
           field.key,
           structuredValues,
@@ -496,6 +436,7 @@ export function SellDemandsPage() {
       cancelled = true;
     };
   }, [
+    getOptions,
     dependencyMaps.parentKeysByChild,
     marketDefinitionLoaded,
     marketDefinitionKey,

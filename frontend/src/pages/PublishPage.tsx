@@ -5,6 +5,8 @@ import { Card } from "../components/Card";
 import { FilterSelect } from "../components/FilterSelect";
 import { PriceInput } from "../components/PriceInput";
 import { useMarket } from "../context/MarketContext";
+import { useOptions } from "../context/OptionsContext";
+import { useProfileStatus } from "../context/ProfileStatusContext";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
@@ -29,13 +31,6 @@ import {
 } from "../lib/sellEngine";
 import { type Option } from "../lib/marketOptions";
 import { mapFieldOptionsForUi } from "../lib/travelRangeOptions";
-
-type MarketFieldOptionsResponse = {
-  ok: true;
-  data: {
-    options: Array<{ id: string; key?: string; label?: string; label_es?: string }>;
-  };
-};
 
 type PublishSuccessCard = {
   identityLine: string;
@@ -79,14 +74,6 @@ type MarketDefinitionResponse = {
   };
 };
 
-type ProfileStatusResponse = {
-  ok: true;
-  data: {
-    departmentId: number | null;
-    departmentName: string | null;
-  };
-};
-
 type RepublishPrefillState = {
   republishPrefill?: {
     brandId: string;
@@ -104,6 +91,8 @@ type RepublishPrefillState = {
 
 export function PublishPage() {
   const { api, token } = useAuth();
+  const { getOptions } = useOptions();
+  const { profileStatus } = useProfileStatus();
   const { marketKey, availableMarkets, setMarket } = useMarket();
   const location = useLocation();
   const navigate = useNavigate();
@@ -117,14 +106,10 @@ export function PublishPage() {
   const [priceAmount, setPriceAmount] = useState("");
   const [locationDepartment, setLocationDepartment] = useState("");
   const [locationMunicipality, setLocationMunicipality] = useState("");
-  const [profileDepartmentId, setProfileDepartmentId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [successCard, setSuccessCard] = useState<PublishSuccessCard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
-  const optionCacheRef = useRef<Record<string, Option[]>>({});
-  const optionsInFlightRef = useRef<Record<string, Promise<Option[]>>>({});
-  const dependencySignatureRef = useRef<Record<string, string>>({});
   const optionIdToKeyRef = useRef<Record<string, Record<string, string>>>({});
 
   const prefillAppliedRef = useRef(false);
@@ -187,9 +172,6 @@ export function PublishPage() {
     setSuccessCard(null);
     setDuplicateNotice(null);
     setError(null);
-    optionCacheRef.current = {};
-    optionsInFlightRef.current = {};
-    dependencySignatureRef.current = {};
     optionIdToKeyRef.current = {};
   }, [marketKey]);
 
@@ -225,38 +207,14 @@ export function PublishPage() {
     };
   }, [api, marketKey, token]);
 
-  useEffect(() => {
-    if (!token) {
-      setProfileDepartmentId("");
-      return;
-    }
-
-    let cancelled = false;
-    api
-      .get<ProfileStatusResponse>("/profile/status", undefined, { suppressGlobalLoader: true })
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        const departmentId = response.data.departmentId;
-        const normalized = departmentId === null || departmentId === undefined ? "" : String(departmentId);
-        setProfileDepartmentId(normalized);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProfileDepartmentId("");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [api, token]);
-
   const sellFields = useMemo(
     () => resolveOrderedFlowFields(marketFields, "SELL"),
     [marketFields]
   );
+  const profileDepartmentId = useMemo(() => {
+    const departmentId = profileStatus?.departmentId;
+    return departmentId === null || departmentId === undefined ? "" : String(departmentId);
+  }, [profileStatus?.departmentId]);
   const marketOptions = useMemo<Option[]>(
     () => availableMarkets.map((market) => ({ id: market.key, label: market.label })),
     [availableMarkets]
@@ -326,77 +284,39 @@ export function PublishPage() {
     });
   }
 
-  function buildOptionsCacheKey(
-    fieldKey: string,
-    dependencyQuery: Record<string, string>,
-    targetMarketKey: string
-  ) {
-    const dependencyKey = Object.entries(dependencyQuery)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, value]) => `${key}=${value}`)
-      .join("&");
-    return `${targetMarketKey}::${fieldKey}::${dependencyKey || "base"}`;
-  }
-
   async function getOrLoadFieldOptions(fieldKey: string, dependencyQuery: Record<string, string>) {
     const requestMarketKey = marketKey ?? "automotive";
-    const cacheKey = buildOptionsCacheKey(fieldKey, dependencyQuery, requestMarketKey);
-    const cached = optionCacheRef.current[cacheKey];
-    if (cached) {
-      return cached;
-    }
-
-    const inFlight = optionsInFlightRef.current[cacheKey];
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const request = api
-      .get<MarketFieldOptionsResponse>(
-        `/catalog/markets/${encodeURIComponent(requestMarketKey)}/fields/${encodeURIComponent(fieldKey)}/options`,
-        dependencyQuery
-      )
-      .then((response) => {
-        const idToKeyMap: Record<string, string> = {};
-        const mapped = response.data.options
-          .map((option) => {
-            const key = String(option.key ?? "").trim();
-            if (!key) {
-              return null;
-            }
-            const rawId = String(option.id ?? "").trim();
-            if (rawId && rawId !== key) {
-              idToKeyMap[rawId] = key;
-            }
-            return {
-              id: key,
-              label: option.label_es ?? option.label ?? key
-            } satisfies Option;
-          })
-          .filter((option): option is Option => option !== null);
-        const idMapKey = `${requestMarketKey}::${fieldKey}`;
-        optionIdToKeyRef.current[idMapKey] = {
-          ...(optionIdToKeyRef.current[idMapKey] ?? {}),
-          ...idToKeyMap
-        };
-        return mapFieldOptionsForUi(fieldKey, mapped);
+    const rows = await getOptions({
+      marketKey: requestMarketKey,
+      fieldKey,
+      deps: dependencyQuery
+    });
+    const idToKeyMap: Record<string, string> = {};
+    const mapped = rows
+      .map((option) => {
+        const key = String(option.key ?? "").trim();
+        if (!key) {
+          return null;
+        }
+        const rawId = String(option.id ?? "").trim();
+        if (rawId && rawId !== key) {
+          idToKeyMap[rawId] = key;
+        }
+        return {
+          id: key,
+          label: option.label_es ?? option.label ?? key
+        } satisfies Option;
       })
-      .then((options) => {
-        optionCacheRef.current[cacheKey] = options;
-        return options;
-      })
-      .finally(() => {
-        delete optionsInFlightRef.current[cacheKey];
-      });
-
-    optionsInFlightRef.current[cacheKey] = request;
-    return request;
+      .filter((option): option is Option => option !== null);
+    const idMapKey = `${requestMarketKey}::${fieldKey}`;
+    optionIdToKeyRef.current[idMapKey] = {
+      ...(optionIdToKeyRef.current[idMapKey] ?? {}),
+      ...idToKeyMap
+    };
+    return mapFieldOptionsForUi(fieldKey, mapped);
   }
 
   useEffect(() => {
-    optionCacheRef.current = {};
-    optionsInFlightRef.current = {};
-    dependencySignatureRef.current = {};
     optionIdToKeyRef.current = {};
     setOptionsByFieldKey({});
   }, [marketKey, sellFieldKeysSignature]);
@@ -450,14 +370,15 @@ export function PublishPage() {
   }
 
   function hasResolvedOptionsForField(fieldKey: string, values: Record<string, string>) {
-    const currentMarketKey = marketKey ?? "automotive";
-    const dependencyQuery = dependencyQueryForField(
+    const dependenciesReady = hasDependencyParentsSelected(
       fieldKey,
       values,
       dependencyMaps.parentKeysByChild
     );
-    const cacheKey = buildOptionsCacheKey(fieldKey, dependencyQuery, currentMarketKey);
-    return Object.prototype.hasOwnProperty.call(optionCacheRef.current, cacheKey);
+    if (!dependenciesReady) {
+      return false;
+    }
+    return Object.prototype.hasOwnProperty.call(optionsByFieldKey, fieldKey);
   }
 
   function sanitizeStructuredValuesAgainstOptions(values: Record<string, string>) {
@@ -627,16 +548,6 @@ export function PublishPage() {
 
     async function loadDependentOptions() {
       for (const field of dependentFields) {
-        const parentKeys = dependencyMaps.parentKeysByChild[field.key] ?? [];
-        const signature = parentKeys
-          .map((parentKey) => `${parentKey}=${structuredValues[parentKey] ?? ""}`)
-          .join("|");
-
-        if (dependencySignatureRef.current[field.key] === signature) {
-          continue;
-        }
-        dependencySignatureRef.current[field.key] = signature;
-
         const dependenciesReady = hasDependencyParentsSelected(
           field.key,
           structuredValues,
@@ -675,7 +586,7 @@ export function PublishPage() {
       cancelled = true;
     };
   }, [
-    api,
+    getOptions,
     dependencyMaps.parentKeysByChild,
     marketDefinitionLoaded,
     marketDefinitionKey,
@@ -723,7 +634,7 @@ export function PublishPage() {
   function buildSuccessCardTitle() {
     if (isHomeServicesMarket) {
       const values = resolvedIdentityValues();
-      const trade = String(values.trade ?? "").trim();
+      const trade = String(values.trade ?? "").trim().toLowerCase();
       const rawExperience = String(values.experience ?? "").trim();
       const experience = rawExperience
         ? (/años?|year/i.test(rawExperience) ? rawExperience : `${rawExperience} años de experiencia`)
@@ -731,7 +642,7 @@ export function PublishPage() {
       const warrantyToken = String(values.warranty ?? "").trim().toLowerCase();
       const hasWarranty = ["yes", "si", "sí", "true", "1"].includes(warrantyToken);
       const warrantyText = hasWarranty ? "que garantiza su trabajo" : "sin garantía declarada";
-      const parts = [trade || "Servicio", experience ? `con ${experience}` : "", warrantyText].filter(
+      const parts = ["Servicios de", trade || "servicio", experience ? `con ${experience}` : "", warrantyText].filter(
         (part) => part.trim().length > 0
       );
       return `${parts.join(" ")}.`.replace(/\s+/g, " ").trim();
@@ -819,7 +730,6 @@ export function PublishPage() {
             delete next[dependentKey];
             changed = true;
           }
-          delete dependencySignatureRef.current[dependentKey];
         }
         return changed ? next : current;
       });
@@ -1025,7 +935,7 @@ export function PublishPage() {
       {successCard ? (
         <div className="stack gap-sm">
           <article className="card stack card-elevated demand-card-compact">
-            <p><strong>{isHomeServicesMarket ? "Ofrezco Servicio De:" : "Vendo"}</strong></p>
+            <p><strong>{isHomeServicesMarket ? "Ofrezco" : "Vendo"}</strong></p>
             <p>
               {successCard.priceLine
                 ? `${successCard.identityLine} - ${successCard.priceLine}`

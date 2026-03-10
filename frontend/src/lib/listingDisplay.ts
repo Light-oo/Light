@@ -186,6 +186,17 @@ function warrantyLabel(value: unknown) {
   return humanizeToken(token).toLowerCase();
 }
 
+function warrantyClause(value: unknown, intent: "BUY" | "SELL") {
+  const token = normalizeToken(value);
+  if (["yes", "si", "sí", "true", "1"].includes(token)) {
+    return intent === "BUY" ? "que garantice su trabajo" : "que garantiza su trabajo";
+  }
+  if (["no", "false", "0"].includes(token)) {
+    return "sin garantía declarada";
+  }
+  return warrantyLabel(value);
+}
+
 function travelRangeLabel(value: unknown, workArea?: string | null) {
   const token = normalizeToken(value);
   if (token === "local") {
@@ -218,24 +229,26 @@ export function formatHomeServicesNarrative(params: {
 }) {
   const trade = tradeLabel(params.identityValues.trade);
   const experience = experienceLabel(params.identityValues.experience);
-  const warranty = warrantyLabel(params.identityValues.warranty);
+  const warranty = warrantyClause(params.identityValues.warranty, params.intent);
   const workAreaFromIdentity = String(params.identityValues.work_area ?? "").trim();
   const locationDepartment = String(params.locationDepartment ?? "").trim();
   const workArea = workAreaFromIdentity || locationDepartment;
   const travelRange = travelRangeLabel(params.identityValues.travel_range, workArea);
 
-  const actor = params.intent === "BUY" ? "Busco" : "Ofrezco";
-  const article = params.intent === "BUY" ? "un" : "servicio de";
+  const normalizedTrade = (trade || "servicio").trim();
+  const normalizedExperience = experience ? `con ${experience}` : "";
+  const normalizedWarranty = warranty || "";
 
-  const headlineParts = [
-    actor,
-    article,
-    trade || "servicio",
-    experience ? `con ${experience}` : "",
-    warranty || ""
-  ].filter((part) => part && String(part).trim().length > 0);
+  const headlineParts =
+    params.intent === "SELL"
+      ? ["Servicios de", normalizedTrade, normalizedExperience, normalizedWarranty]
+      : [
+          normalizedTrade.charAt(0).toUpperCase() + normalizedTrade.slice(1),
+          normalizedExperience,
+          normalizedWarranty
+        ];
 
-  const headline = `${headlineParts.join(" ")}.`.replace(/\s+/g, " ").trim();
+  const headline = `${headlineParts.filter(Boolean).join(" ")}.`.replace(/\s+/g, " ").trim();
   const locationLine = travelRange || (workArea ? `Disponible en ${workArea}.` : "Disponible en El Salvador.");
 
   return {

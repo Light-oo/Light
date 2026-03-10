@@ -2,6 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
+import { useProfileStatus } from "../context/ProfileStatusContext";
 import { ApiError } from "../lib/apiClient";
 import { WhatsappSvInput } from "../components/WhatsappSvInput";
 import { toUiErrorMessage } from "../lib/errorMessages";
@@ -14,20 +15,6 @@ import {
   parseWhatsappE164,
   type WhatsappCountry
 } from "../lib/whatsappCountries";
-
-type ProfileStatusResponse = {
-  ok: true;
-  data: {
-    role: string | null;
-    tokens: number | null;
-    whatsappE164: string | null;
-    departmentId: number | null;
-    departmentName: string | null;
-    whatsappStatus: "missing" | "present";
-    whatsappVerificationStatus?: "missing" | "pending" | "verified" | null;
-    profileComplete: boolean;
-  };
-};
 
 type DepartmentsResponse = {
   ok: true;
@@ -45,6 +32,7 @@ type DepartmentsResponse = {
 
 export function AccountPage() {
   const { api, userId, token, email, signOut } = useAuth();
+  const { profileStatus, refreshProfileStatus } = useProfileStatus();
   const navigate = useNavigate();
   const [whatsappLocal, setWhatsappLocal] = useState("");
   const [selectedWhatsappCountry, setSelectedWhatsappCountry] = useState<WhatsappCountry>(defaultWhatsappCountry);
@@ -86,28 +74,27 @@ export function AccountPage() {
     whatsappLocal.length >= WHATSAPP_LOCAL_MIN_DIGITS &&
     whatsappLocal.length <= WHATSAPP_LOCAL_MAX_DIGITS;
 
-  async function loadProfileStatus() {
-    const response = await api.get<ProfileStatusResponse>("/profile/status");
-    const parsedWhatsapp = parseWhatsappE164(response.data.whatsappE164 ?? null);
-    setWhatsappLocal(parsedWhatsapp.localNumber);
-    setSelectedWhatsappCountry(parsedWhatsapp.country);
-    setDepartmentId(
-      typeof response.data.departmentId === "number" && Number.isFinite(response.data.departmentId)
-        ? response.data.departmentId
-        : null
-    );
-    setIsEditingWhatsapp(false);
-  }
-
   useEffect(() => {
     if (!token || !userId) {
       return;
     }
 
-    Promise.all([api.get<{ ok: true; userId: string }>("/auth/ping"), loadProfileStatus()])
+    api.get<{ ok: true; userId: string }>("/auth/ping")
       .then(() => {})
       .catch((err) => setError(toUiErrorMessage(err)));
   }, [api, token, userId]);
+
+  useEffect(() => {
+    const parsedWhatsapp = parseWhatsappE164(profileStatus?.whatsappE164 ?? null);
+    setWhatsappLocal(parsedWhatsapp.localNumber);
+    setSelectedWhatsappCountry(parsedWhatsapp.country);
+    setDepartmentId(
+      typeof profileStatus?.departmentId === "number" && Number.isFinite(profileStatus.departmentId)
+        ? profileStatus.departmentId
+        : null
+    );
+    setIsEditingWhatsapp(false);
+  }, [profileStatus?.departmentId, profileStatus?.whatsappE164]);
 
   useEffect(() => {
     if (!token) {
@@ -136,7 +123,7 @@ export function AccountPage() {
       await api.post("/profile/whatsapp", {
         whatsapp: nextValue
       });
-      await loadProfileStatus();
+      await refreshProfileStatus();
       setSaveMessage("WhatsApp actualizado.");
       setMenuOpen(false);
     } catch (err) {
@@ -162,7 +149,7 @@ export function AccountPage() {
       await api.patch("/api/me", {
         department_id: nextDepartmentId
       });
-      await loadProfileStatus();
+      await refreshProfileStatus();
       setSaveMessage("Departamento actualizado.");
     } catch (err) {
       setError(toUiErrorMessage(err));
@@ -180,10 +167,7 @@ export function AccountPage() {
     setError(null);
 
     try {
-      const response = await api.get<ProfileStatusResponse>("/profile/status", undefined, {
-        suppressGlobalLoader: true
-      });
-      if (response.data.whatsappVerificationStatus !== "verified") {
+      if (profileStatus?.whatsappVerificationStatus !== "verified") {
         navigate("/verify-whatsapp");
         return;
       }

@@ -42,6 +42,7 @@ const ACTIVE_COLUMNS = ["active", "is_active", "enabled", "is_enabled", "status"
 const dependencyColumnCache = new Map<string, string | null>();
 const dependencyValueCache = new Map<string, string | null>();
 const dependencyColumnUuidCache = new Map<string, boolean>();
+const sourceMarketScopeColumnCache = new Map<string, string>();
 
 function shouldTraceVocabulary() {
   const value = String(process.env.ENGINE_TRACE_OPTIONS ?? "").trim().toLowerCase();
@@ -311,6 +312,7 @@ async function loadOptionRows(
   };
 
   if (resolvedMarket) {
+    const sourceScopeCacheKey = sourceRef.trim().toLowerCase();
     const scopeCandidates: Array<OptionSourceScope> = [];
     if (explicitScope?.column && explicitScope?.value) {
       scopeCandidates.push(explicitScope);
@@ -328,10 +330,35 @@ async function loadOptionRows(
       scopeCandidates.push({ column: "market_ref", value: marketId });
     }
 
+    const cachedScopeColumn = sourceMarketScopeColumnCache.get(sourceScopeCacheKey);
+    if (cachedScopeColumn) {
+      const cachedScope = scopeCandidates.find(
+        (candidate) => candidate.column.toLowerCase() === cachedScopeColumn.toLowerCase()
+      );
+      if (cachedScope) {
+        const cachedResponse = await runQuery(cachedScope);
+        if (!cachedResponse.error) {
+          return (cachedResponse.data ?? []) as RawRecord[];
+        }
+        if (isMissingColumnError(cachedResponse.error)) {
+          sourceMarketScopeColumnCache.delete(sourceScopeCacheKey);
+        } else {
+          throw new MarketResolutionError(
+            "FIELD_OPTION_QUERY_FAILED",
+            `Failed loading options from "${sourceRef}": ${cachedResponse.error.message}`,
+            500
+          );
+        }
+      } else {
+        sourceMarketScopeColumnCache.delete(sourceScopeCacheKey);
+      }
+    }
+
     let missingColumnCount = 0;
     for (const scope of scopeCandidates) {
       const { data, error } = await runQuery(scope);
       if (!error) {
+        sourceMarketScopeColumnCache.set(sourceScopeCacheKey, scope.column);
         return (data ?? []) as RawRecord[];
       }
       if (isMissingColumnError(error)) {

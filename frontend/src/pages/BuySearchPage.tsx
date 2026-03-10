@@ -4,6 +4,7 @@ import { Card } from "../components/Card";
 import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
 import { useMarket } from "../context/MarketContext";
+import { useOptions } from "../context/OptionsContext";
 import { buildBuySearchQuery, normalizeBuySearchResponse } from "../lib/buyEngine";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
@@ -49,13 +50,6 @@ type RevealResponse = {
   };
 };
 
-type MarketFieldOptionsResponse = {
-  ok: true;
-  data: {
-    options: Array<{ id: string; key?: string; label?: string; label_es?: string }>;
-  };
-};
-
 type MarketDefinitionResponse = {
   ok: true;
   data: {
@@ -92,6 +86,7 @@ type MarketDefinitionResponse = {
 
 export function BuySearchPage() {
   const { api, token } = useAuth();
+  const { getOptions } = useOptions();
   const { marketKey, availableMarkets, setMarket } = useMarket();
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
   const [marketDependencies, setMarketDependencies] = useState<MarketDependency[]>([]);
@@ -117,9 +112,6 @@ export function BuySearchPage() {
     Record<string, { loading: boolean; whatsappUrl?: string; didConsume?: boolean; error?: string }>
   >({});
   const searchDebounceRef = useRef<number | null>(null);
-  const optionCacheRef = useRef<Record<string, Option[]>>({});
-  const optionsInFlightRef = useRef<Record<string, Promise<Option[]>>>({});
-  const dependencySignatureRef = useRef<Record<string, string>>({});
   const optionIdToKeyRef = useRef<Record<string, Record<string, string>>>({});
 
   useEffect(() => {
@@ -146,9 +138,6 @@ export function BuySearchPage() {
     setMessage(null);
     setError(null);
     setRevealState({});
-    optionCacheRef.current = {};
-    optionsInFlightRef.current = {};
-    dependencySignatureRef.current = {};
     optionIdToKeyRef.current = {};
   }, [marketKey]);
 
@@ -236,77 +225,39 @@ export function BuySearchPage() {
     });
   }
 
-  function buildOptionsCacheKey(
-    fieldKey: string,
-    dependencyQuery: Record<string, string>,
-    targetMarketKey: string
-  ) {
-    const dependencyKey = Object.entries(dependencyQuery)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, value]) => `${key}=${value}`)
-      .join("&");
-    return `${targetMarketKey}::${fieldKey}::${dependencyKey || "base"}`;
-  }
-
   async function getOrLoadFieldOptions(fieldKey: string, dependencyQuery: Record<string, string>) {
     const requestMarketKey = marketKey ?? "automotive";
-    const cacheKey = buildOptionsCacheKey(fieldKey, dependencyQuery, requestMarketKey);
-    const cached = optionCacheRef.current[cacheKey];
-    if (cached) {
-      return cached;
-    }
-
-    const inFlight = optionsInFlightRef.current[cacheKey];
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const request = api
-      .get<MarketFieldOptionsResponse>(
-        `/catalog/markets/${encodeURIComponent(requestMarketKey)}/fields/${encodeURIComponent(fieldKey)}/options`,
-        dependencyQuery
-      )
-      .then((response) => {
-        const idToKeyMap: Record<string, string> = {};
-        const mapped = response.data.options
-          .map((option) => {
-            const key = String(option.key ?? "").trim();
-            if (!key) {
-              return null;
-            }
-            const rawId = String(option.id ?? "").trim();
-            if (rawId && rawId !== key) {
-              idToKeyMap[rawId] = key;
-            }
-            return {
-              id: key,
-              label: option.label_es ?? option.label ?? key
-            } satisfies Option;
-          })
-          .filter((option): option is Option => option !== null);
-        const idMapKey = `${requestMarketKey}::${fieldKey}`;
-        optionIdToKeyRef.current[idMapKey] = {
-          ...(optionIdToKeyRef.current[idMapKey] ?? {}),
-          ...idToKeyMap
-        };
-        return mapFieldOptionsForUi(fieldKey, mapped);
+    const rows = await getOptions({
+      marketKey: requestMarketKey,
+      fieldKey,
+      deps: dependencyQuery
+    });
+    const idToKeyMap: Record<string, string> = {};
+    const mapped = rows
+      .map((option) => {
+        const key = String(option.key ?? "").trim();
+        if (!key) {
+          return null;
+        }
+        const rawId = String(option.id ?? "").trim();
+        if (rawId && rawId !== key) {
+          idToKeyMap[rawId] = key;
+        }
+        return {
+          id: key,
+          label: option.label_es ?? option.label ?? key
+        } satisfies Option;
       })
-      .then((options) => {
-        optionCacheRef.current[cacheKey] = options;
-        return options;
-      })
-      .finally(() => {
-        delete optionsInFlightRef.current[cacheKey];
-      });
-
-    optionsInFlightRef.current[cacheKey] = request;
-    return request;
+      .filter((option): option is Option => option !== null);
+    const idMapKey = `${requestMarketKey}::${fieldKey}`;
+    optionIdToKeyRef.current[idMapKey] = {
+      ...(optionIdToKeyRef.current[idMapKey] ?? {}),
+      ...idToKeyMap
+    };
+    return mapFieldOptionsForUi(fieldKey, mapped);
   }
 
   useEffect(() => {
-    optionCacheRef.current = {};
-    optionsInFlightRef.current = {};
-    dependencySignatureRef.current = {};
     optionIdToKeyRef.current = {};
     setOptionsByFieldKey({});
   }, [marketKey, buyFieldKeysSignature]);
@@ -344,14 +295,15 @@ export function BuySearchPage() {
   }
 
   function hasResolvedOptionsForField(fieldKey: string, values: Record<string, string>) {
-    const currentMarketKey = marketKey ?? "automotive";
-    const dependencyQuery = dependencyQueryForField(
+    const dependenciesReady = hasDependencyParentsSelected(
       fieldKey,
       values,
       dependencyMaps.parentKeysByChild
     );
-    const cacheKey = buildOptionsCacheKey(fieldKey, dependencyQuery, currentMarketKey);
-    return Object.prototype.hasOwnProperty.call(optionCacheRef.current, cacheKey);
+    if (!dependenciesReady) {
+      return false;
+    }
+    return Object.prototype.hasOwnProperty.call(optionsByFieldKey, fieldKey);
   }
 
   function sanitizeStructuredValuesAgainstOptions(values: Record<string, string>) {
@@ -520,16 +472,6 @@ export function BuySearchPage() {
 
     async function loadDependentOptions() {
       for (const field of dependentFields) {
-        const parentKeys = dependencyMaps.parentKeysByChild[field.key] ?? [];
-        const signature = parentKeys
-          .map((parentKey) => `${parentKey}=${structuredValues[parentKey] ?? ""}`)
-          .join("|");
-
-        if (dependencySignatureRef.current[field.key] === signature) {
-          continue;
-        }
-        dependencySignatureRef.current[field.key] = signature;
-
         const dependenciesReady = hasDependencyParentsSelected(
           field.key,
           structuredValues,
@@ -568,7 +510,7 @@ export function BuySearchPage() {
       cancelled = true;
     };
   }, [
-    api,
+    getOptions,
     searchFormFields,
     dependencyMaps.parentKeysByChild,
     marketDefinitionLoaded,
@@ -627,10 +569,10 @@ export function BuySearchPage() {
               setMessage("Registra tu número de WhatsApp para continuar.");
             } else if (normalized.demandAction === "updated") {
             setMessage("La búsqueda fue actualizada.");
-            } else if (normalized.demandAction === "existing") {
+          } else if (normalized.demandAction === "existing") {
             setMessage("La búsqueda ya existe.");
             } else {
-            setMessage("No hay resultados. Nos encargaremos de encontrar lo que busca.");
+            setMessage("Estamos buscando a alguien que pueda ayudarle. Le contactaremos pronto.");
             }
           }
       })
@@ -903,7 +845,7 @@ export function BuySearchPage() {
         const reveal = revealState[card.id];
         return (
           <article key={card.id} className="card stack card-elevated">
-            <p><strong>Vendo</strong></p>
+            <p><strong>{narrative ? "Ofrezco" : "Vendo"}</strong></p>
             {narrative ? (
               <>
                 <p>{narrative.headline}</p>

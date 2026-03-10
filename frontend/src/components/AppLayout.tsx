@@ -1,19 +1,22 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
 import logoLoader from "../assets/logo-loader.svg";
+import { useProfileStatus } from "../context/ProfileStatusContext";
 
 export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { api, token } = useAuth();
+  const { profileStatus } = useProfileStatus();
   const isSearchRoute = location.pathname.startsWith("/search");
   const isPublishRoute = location.pathname.startsWith("/publish");
   const isAccountRoute = location.pathname.startsWith("/account");
   const isSellActive =
     isPublishRoute || location.pathname.startsWith("/sell-demands");
   const activeModeLabel = isSellActive ? "Vendo" : "Busco";
-  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const tokenBalance = useMemo(
+    () => (typeof profileStatus?.tokens === "number" ? profileStatus.tokens : null),
+    [profileStatus?.tokens]
+  );
 
   function resolveHeaderModeTarget() {
     if (isSearchRoute) {
@@ -24,38 +27,6 @@ export function AppLayout() {
     }
     return "/search";
   }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!token) {
-      setTokenBalance(null);
-      return;
-    }
-
-    api
-      .get<{ ok: true; data: { tokens: number | null } }>(
-        "/profile/status",
-        undefined,
-        { suppressGlobalLoader: true }
-      )
-      .then((response) => {
-        if (!cancelled) {
-          setTokenBalance(
-            typeof response.data.tokens === "number" ? response.data.tokens : null
-          );
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setTokenBalance(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [api, token, location.pathname]);
 
   return (
     <div className="mobile-shell">
