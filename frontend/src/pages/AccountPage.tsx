@@ -484,7 +484,7 @@ export function AccountPage() {
             <ul className="tokens-info-list">
               <li>Los Tokens no expiran</li>
               <li>Solo sirven para revelar contactos</li>
-              <li>No hay refunds por compra de Tokens</li>
+              <li>No hay reembolsos por compra de Tokens</li>
             </ul>
           </Card>
 
