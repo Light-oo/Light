@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useMarket } from "../context/MarketContext";
-import { useProfileStatus } from "../context/ProfileStatusContext";
 import { Card } from "../components/Card";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
   extractIdentityValuesForFields,
+  formatAutomotiveCardLines,
   formatHomeServicesNarrative,
-  formatMarketListingIdentity,
+  isAutomotiveIdentity,
   isHomeServicesIdentity,
   parseSignatureIdentityValues
 } from "../lib/listingDisplay";
@@ -124,15 +124,9 @@ function formatWhen(value: string) {
   return date.toLocaleString();
 }
 
-function formatCardLocation(city?: string | null) {
-  const normalizedCity = String(city ?? "").trim();
-  return normalizedCity || "El Salvador";
-}
-
 function ListingGroup({
   title,
   rows,
-  locationLabel,
   orderedFields,
   mode,
   onSetInactive,
@@ -141,7 +135,6 @@ function ListingGroup({
 }: {
   title: string;
   rows: MyListingRow[];
-  locationLabel: string;
   orderedFields: MarketFieldDefinition[];
   mode: "active" | "inactive";
   onSetInactive: (row: MyListingRow) => void;
@@ -164,31 +157,33 @@ function ListingGroup({
           year: row.year ?? specs?.year,
           identity: signatureIdentity
         }, displayFields);
-        const identityLabel = formatMarketListingIdentity({
-          orderedFields: displayFields,
-          values: identityValues,
-          separator: " / "
-        });
+        const automotiveLines = isAutomotiveIdentity(identityValues)
+          ? formatAutomotiveCardLines(identityValues)
+          : null;
         const price = resolveListingPrice(row);
         const narrative = isHomeServicesIdentity(identityValues)
           ? formatHomeServicesNarrative({
               intent: "SELL",
-              identityValues,
-              locationDepartment: locationLabel
+              identityValues
             })
           : null;
         return (
           <article key={row.id} className="card stack listing-row">
-            <p><strong>{narrative ? "Ofrezco" : "Vendo"}</strong></p>
+            <p>
+              <strong>
+                {narrative
+                  ? `Ofrezco ${narrative.headline}`
+                  : `Vendo ${automotiveLines?.partLine || "Pieza"}`}
+              </strong>
+            </p>
             {narrative ? (
               <>
-                <p>{narrative.headline}</p>
-                <p>{narrative.locationLine}</p>
+                <p>{narrative.secondaryLine}</p>
               </>
             ) : (
               <>
-                <p>{`${identityLabel} - ${price}`}</p>
-                <p>{locationLabel}</p>
+                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
+                {price !== "—" ? <p>{`Precio: ${price}`}</p> : null}
               </>
             )}
             <p>Creado: {formatWhen(row.created_at)}</p>
@@ -211,14 +206,12 @@ function ListingGroup({
 function DemandGroup({
   title,
   rows,
-  locationLabel,
   orderedFields,
   onSetInactive,
   togglingById
 }: {
   title: string;
   rows: MyDemandRow[];
-  locationLabel: string;
   orderedFields: MarketFieldDefinition[];
   onSetInactive: (row: MyDemandRow) => void;
   togglingById: Record<string, boolean>;
@@ -237,31 +230,32 @@ function DemandGroup({
           year: row.year,
           identity: signatureIdentity
         }, displayFields);
-        const identityLabel = formatMarketListingIdentity({
-          orderedFields: displayFields,
-          values: identityValues,
-          separator: " / "
-        });
+        const automotiveLines = isAutomotiveIdentity(identityValues)
+          ? formatAutomotiveCardLines(identityValues)
+          : null;
         const narrative = isHomeServicesIdentity(identityValues)
           ? formatHomeServicesNarrative({
               intent: "BUY",
-              identityValues,
-              locationDepartment: locationLabel
+              identityValues
             })
           : null;
         const isActive = row.status === "open";
         return (
           <article key={row.id} className="card stack listing-row">
-            <p><strong>Busco</strong></p>
+            <p>
+              <strong>
+                {narrative
+                  ? `Busco ${narrative.headline}`
+                  : `Busco ${automotiveLines?.partLine || "Pieza"}`}
+              </strong>
+            </p>
             {narrative ? (
               <>
-                <p>{narrative.headline}</p>
-                <p>{narrative.locationLine}</p>
+                <p>{narrative.secondaryLine}</p>
               </>
             ) : (
               <>
-                <p>{identityLabel}</p>
-                <p>{locationLabel}</p>
+                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
               </>
             )}
             <p>Creado: {formatWhen(row.created_at)}</p>
@@ -279,7 +273,6 @@ function DemandGroup({
 
 export function MyListingsPage() {
   const { api, token, userId } = useAuth();
-  const { profileStatus } = useProfileStatus();
   const { marketKey } = useMarket();
   const [rows, setRows] = useState<MyListingRow[]>([]);
   const [demands, setDemands] = useState<MyDemandRow[]>([]);
@@ -399,8 +392,6 @@ export function MyListingsPage() {
     () => resolveOrderedFlowFields(marketFields, "BUY"),
     [marketFields]
   );
-  const locationLabel = formatCardLocation(profileStatus?.departmentName ?? null);
-
   return (
     <div className="screen stack gap-lg">
       {error ? <p className="error">{error}</p> : null}
@@ -408,7 +399,6 @@ export function MyListingsPage() {
       <DemandGroup
         title={`Búsquedas Activas (${activeDemands.length})`}
         rows={activeDemands}
-        locationLabel={locationLabel}
         orderedFields={demandDisplayFields}
         onSetInactive={setDemandInactive}
         togglingById={togglingDemandById}
@@ -417,7 +407,6 @@ export function MyListingsPage() {
       <ListingGroup
         title={`Ventas Activas (${activeRows.length})`}
         rows={activeRows}
-        locationLabel={locationLabel}
         orderedFields={listingDisplayFields}
         mode="active"
         onSetInactive={setInactive}
@@ -428,7 +417,6 @@ export function MyListingsPage() {
       <ListingGroup
         title={`Ventas Inactivas (${inactiveRows.length})`}
         rows={inactiveRows}
-        locationLabel={locationLabel}
         orderedFields={listingDisplayFields}
         mode="inactive"
         onSetInactive={setInactive}

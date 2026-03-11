@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
 import { logError, logInfo, logWarn } from "../lib/logger";
 import {
+  confirmWhatsappVerificationForCurrentUser,
   getProfileStatus,
   normalizeWhatsappE164,
   startWhatsappVerificationForCurrentUser,
@@ -16,6 +17,9 @@ const setWhatsappBodySchema = z.object({
 }).strict();
 const startWhatsappVerificationBodySchema = z.object({
   whatsapp: z.string().min(1)
+}).strict();
+const confirmWhatsappVerificationBodySchema = z.object({
+  code: z.string().min(1)
 }).strict();
 
 function isDuplicateWhatsappError(error: any) {
@@ -158,6 +162,57 @@ router.post("/profile/whatsapp/verification/start", requireAuth, async (req, res
       });
     }
     logError(req, "whatsapp_verification_start_error", {
+      userId,
+      code: error?.code,
+      message: error?.message
+    });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+});
+
+router.post("/profile/whatsapp/verification/confirm", requireAuth, async (req, res, next) => {
+  let parsed: z.infer<typeof confirmWhatsappVerificationBodySchema>;
+  try {
+    parsed = confirmWhatsappVerificationBodySchema.parse(req.body);
+  } catch (err) {
+    return next(err);
+  }
+
+  const authToken = (req as unknown as { authToken: string }).authToken;
+  const userId = (req as unknown as { user: { id: string } }).user.id;
+
+  try {
+    const verification = await confirmWhatsappVerificationForCurrentUser(
+      authToken,
+      userId,
+      parsed.code
+    );
+
+    logInfo(req, "whatsapp_verification_confirmed", {
+      userId,
+      whatsappVerificationStatus: verification.whatsappVerificationStatus
+    });
+
+    return res.json({
+      ok: true,
+      data: {
+        whatsappE164: verification.whatsappE164,
+        whatsappVerificationStatus: verification.whatsappVerificationStatus,
+        whatsappVerifiedAt: verification.whatsappVerifiedAt
+      }
+    });
+  } catch (error: any) {
+    if (String(error?.code ?? "") === "PROFILE_NOT_FOUND") {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+    if (String(error?.code ?? "") === "INVALID_VERIFICATION_CODE") {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_verification_code"
+      });
+    }
+
+    logError(req, "whatsapp_verification_confirm_error", {
       userId,
       code: error?.code,
       message: error?.message

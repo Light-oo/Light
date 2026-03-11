@@ -63,9 +63,6 @@ type ResolveMarketOptions = {
 
 const ACTIVE_COLUMNS = ["active", "is_active", "enabled", "is_enabled", "status"] as const;
 const MARKET_REF_COLUMNS = ["market_id", "marketId", "market_key", "marketKey", "market"] as const;
-const DEPRECATED_FIELDS_BY_MARKET: Record<string, Set<string>> = {
-  home_services: new Set(["travel_range"])
-};
 
 function pickFirst(row: RawRecord, keys: readonly string[]) {
   for (const key of keys) {
@@ -257,14 +254,6 @@ function sortByOrderAndKey<T extends { order: number; key?: string; fieldKey?: s
   });
 }
 
-function isDeprecatedField(marketKey: string, fieldKey: string) {
-  const deprecated = DEPRECATED_FIELDS_BY_MARKET[marketKey];
-  if (!deprecated) {
-    return false;
-  }
-  return deprecated.has(fieldKey.trim().toLowerCase());
-}
-
 const marketConfigCache = new Map<string, ResolvedMarket>();
 const marketConfigInFlight = new Map<string, Promise<ResolvedMarket>>();
 
@@ -359,8 +348,7 @@ export async function resolveMarketConfiguration(
         } satisfies ResolvedMarketField;
       })
       .filter((row): row is ResolvedMarketField => row !== null)
-      .filter((row) => row.active)
-      .filter((row) => !isDeprecatedField(marketKey, row.key));
+      .filter((row) => row.active);
 
     if (normalizedFields.length === 0) {
       throw new MarketResolutionError(

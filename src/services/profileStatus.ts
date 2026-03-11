@@ -278,3 +278,64 @@ export async function startWhatsappVerificationForCurrentUser(
         : null
   };
 }
+
+export async function confirmWhatsappVerificationForCurrentUser(
+  accessToken: string,
+  userId: string,
+  verificationCode: string
+) {
+  const normalizedCode = verificationCode.trim().toLowerCase();
+  if (!normalizedCode) {
+    throw makeError("INVALID_VERIFICATION_CODE", "invalid_verification_code");
+  }
+
+  const supabase = createSupabaseAnon({ accessToken });
+  const { data: currentProfile, error: currentProfileError } = await supabase
+    .from("profiles")
+    .select("id,whatsapp_verification_code,whatsapp_verification_status,whatsapp_e164")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (currentProfileError) {
+    throw currentProfileError;
+  }
+
+  if (!currentProfile) {
+    throw makeError("PROFILE_NOT_FOUND", "profile_not_found");
+  }
+
+  const storedCode = String((currentProfile as any)?.whatsapp_verification_code ?? "")
+    .trim()
+    .toLowerCase();
+  if (!storedCode || storedCode !== normalizedCode) {
+    throw makeError("INVALID_VERIFICATION_CODE", "invalid_verification_code");
+  }
+
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({
+      whatsapp_verification_status: "verified",
+      whatsapp_verified_at: nowIso
+    })
+    .eq("id", userId)
+    .select("whatsapp_e164,whatsapp_verification_status,whatsapp_verified_at")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw makeError("PROFILE_NOT_FOUND", "profile_not_found");
+  }
+
+  return {
+    whatsappE164: String((data as any)?.whatsapp_e164 ?? ""),
+    whatsappVerificationStatus: String((data as any)?.whatsapp_verification_status ?? "verified"),
+    whatsappVerifiedAt:
+      typeof (data as any)?.whatsapp_verified_at === "string"
+        ? (data as any).whatsapp_verified_at
+        : nowIso
+  };
+}

@@ -9,6 +9,8 @@ const messages: Record<string, string> = {
   INVALID_WHATSAPP_NUMBER: "Numero de WhatsApp invalido. Debe estar en formato +503XXXXXXXX.",
   WHATSAPP_ALREADY_IN_USE: "Ese numero de WhatsApp ya esta en uso.",
   whatsapp_already_in_use: "Ese numero de WhatsApp ya esta en uso.",
+  INVALID_VERIFICATION_CODE: "Codigo de verificacion invalido.",
+  invalid_verification_code: "Codigo de verificacion invalido.",
   insufficient_tokens: "No tiene tokens suficientes.",
   RATE_LIMIT_EXCEEDED: "Demasiados intentos de revelado. Espere un momento.",
   listing_not_active: "La publicacion ya no esta disponible.",

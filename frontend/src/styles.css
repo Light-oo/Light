@@ -313,6 +313,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.9rem;
+  min-width: 0;
   transition: transform 140ms ease, box-shadow 140ms ease;
 }
 
@@ -321,8 +322,14 @@ body {
   margin: 0;
 }
 
+.card > * {
+  min-width: 0;
+}
+
 .card p {
   margin: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .card-elevated:hover {
@@ -422,6 +429,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+}
+
+.stack > * {
+  min-width: 0;
 }
 
 .gap-lg {
@@ -697,7 +708,9 @@ small {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: fit-content;
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
   padding: 0.6rem 0.7rem;
   border-radius: 8px;
   border: 1px solid var(--line-strong);

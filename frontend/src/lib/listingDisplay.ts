@@ -148,78 +148,93 @@ function humanizeToken(value: string) {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
-function tradeLabel(value: unknown) {
-  const token = normalizeToken(value);
-  const map: Record<string, string> = {
-    albanil: "albañil"
-  };
+function normalizeUiToken(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const lower = raw.toLowerCase();
+  if (/^[a-z0-9_]+$/.test(lower)) {
+    return humanizeToken(lower);
+  }
+  return raw;
+}
+
+function toDisplayLabel(value: unknown, map: Record<string, string>) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const token = normalizeToken(raw);
   if (map[token]) {
     return map[token];
   }
-  return humanizeToken(token).toLowerCase();
+
+  if (/^[a-z0-9_]+$/.test(token)) {
+    return humanizeToken(token);
+  }
+
+  return raw;
+}
+
+function tradeLabel(value: unknown) {
+  return toDisplayLabel(value, {
+    albanil: "Albanil"
+  });
 }
 
 function experienceLabel(value: unknown) {
-  const token = normalizeToken(value);
-  const map: Record<string, string> = {
-    "1_3_years": "1 a 3 años de experiencia",
-    "3_5_years": "3 a 5 años de experiencia",
-    "5_plus_years": "más de 5 años de experiencia"
-  };
-  if (map[token]) {
-    return map[token];
-  }
-  if (token.includes("año")) {
-    return token;
-  }
-  return humanizeToken(token).toLowerCase();
-}
-
-function warrantyLabel(value: unknown) {
-  const token = normalizeToken(value);
-  if (["yes", "si", "sí", "true", "1"].includes(token)) {
-    return "que garantiza su trabajo";
-  }
-  if (["no", "false", "0"].includes(token)) {
-    return "sin garantía declarada";
-  }
-  return humanizeToken(token).toLowerCase();
-}
-
-function warrantyClause(value: unknown, intent: "BUY" | "SELL") {
-  const token = normalizeToken(value);
-  if (["yes", "si", "sí", "true", "1"].includes(token)) {
-    return intent === "BUY" ? "que garantice su trabajo" : "que garantiza su trabajo";
-  }
-  if (["no", "false", "0"].includes(token)) {
-    return "sin garantía declarada";
-  }
-  return warrantyLabel(value);
-}
-
-function travelRangeLabel(value: unknown, workArea?: string | null) {
-  const token = normalizeToken(value);
-  if (token === "local") {
-    const normalizedArea = String(workArea ?? "").trim();
-    return normalizedArea ? `Disponible en ${normalizedArea}.` : "Disponible en su zona.";
-  }
-  if (token === "department") {
-    return "Puede trabajar dentro de su departamento.";
-  }
-  if (token === "interdepartmental") {
-    return "Puede moverse entre departamentos.";
-  }
-  if (token === "national") {
-    return "Puede trabajar en todo el país.";
-  }
-  return humanizeToken(token);
+  return toDisplayLabel(value, {
+    con_experiencia: "Con experiencia previa",
+    sin_experiencia: "Sin experiencia previa",
+    "1_3_years": "1 a 3 anos de experiencia",
+    "3_5_years": "3 a 5 anos de experiencia",
+    "5_plus_years": "Mas de 5 anos de experiencia"
+  });
 }
 
 export function isHomeServicesIdentity(values: Record<string, unknown>) {
-  return ["trade", "warranty", "experience", "travel_range", "work_area"].some((key) => {
+  return ["trade", "experience", "work_area", "detail"].some((key) => {
     const value = String(values[key] ?? "").trim();
     return value.length > 0;
   });
+}
+
+export function isAutomotiveIdentity(values: Record<string, unknown>) {
+  const hasPart = String(values.part ?? "").trim().length > 0;
+  const hasBrand = String(values.brand ?? "").trim().length > 0;
+  const hasModel = String(values.model ?? "").trim().length > 0;
+  const hasYear = String(values.year ?? "").trim().length > 0;
+  return hasPart || hasBrand || hasModel || hasYear;
+}
+
+export function formatAutomotiveCardLines(values: Record<string, unknown>) {
+  const partLine = normalizeUiToken(values.part);
+  const brand = normalizeUiToken(values.brand);
+  const model = normalizeUiToken(values.model);
+  const year = normalizeUiToken(values.year);
+  const vehicleLine = [brand, model, year].filter((item) => item.length > 0).join(" ").trim();
+
+  return {
+    partLine,
+    vehicleLine
+  };
+}
+
+export function formatAutomotiveIdentityLine(values: Record<string, unknown>) {
+  const lines = formatAutomotiveCardLines(values);
+  if (lines.partLine && lines.vehicleLine) {
+    return `${lines.partLine} / ${lines.vehicleLine}`;
+  }
+  if (lines.partLine) {
+    return lines.partLine;
+  }
+  if (lines.vehicleLine) {
+    return lines.vehicleLine;
+  }
+  return "—";
 }
 
 export function formatHomeServicesNarrative(params: {
@@ -227,32 +242,16 @@ export function formatHomeServicesNarrative(params: {
   identityValues: Record<string, unknown>;
   locationDepartment?: string | null;
 }) {
+  void params.intent;
+  void params.locationDepartment;
   const trade = tradeLabel(params.identityValues.trade);
   const experience = experienceLabel(params.identityValues.experience);
-  const warranty = warrantyClause(params.identityValues.warranty, params.intent);
-  const workAreaFromIdentity = String(params.identityValues.work_area ?? "").trim();
-  const locationDepartment = String(params.locationDepartment ?? "").trim();
-  const workArea = workAreaFromIdentity || locationDepartment;
-  const travelRange = travelRangeLabel(params.identityValues.travel_range, workArea);
-
-  const normalizedTrade = (trade || "servicio").trim();
-  const normalizedExperience = experience ? `con ${experience}` : "";
-  const normalizedWarranty = warranty || "";
-
-  const headlineParts =
-    params.intent === "SELL"
-      ? ["Servicios de", normalizedTrade, normalizedExperience, normalizedWarranty]
-      : [
-          normalizedTrade.charAt(0).toUpperCase() + normalizedTrade.slice(1),
-          normalizedExperience,
-          normalizedWarranty
-        ];
-
-  const headline = `${headlineParts.filter(Boolean).join(" ")}.`.replace(/\s+/g, " ").trim();
-  const locationLine = travelRange || (workArea ? `Disponible en ${workArea}.` : "Disponible en El Salvador.");
+  const normalizedTrade = trade || "Servicio";
+  const headline = `Servicio de ${normalizedTrade}`.replace(/\s+/g, " ").trim();
+  const secondaryLine = (experience || "Experiencia no especificada").trim();
 
   return {
     headline,
-    locationLine
+    secondaryLine
   };
 }

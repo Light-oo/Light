@@ -7,8 +7,9 @@ import { useMarket } from "../context/MarketContext";
 import { useOptions } from "../context/OptionsContext";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
+  formatAutomotiveCardLines,
   formatHomeServicesNarrative,
-  formatMarketDemandIdentity,
+  isAutomotiveIdentity,
   isHomeServicesIdentity
 } from "../lib/listingDisplay";
 import {
@@ -104,6 +105,8 @@ type RevealResponse = {
   };
 };
 
+const HOME_SERVICES_RUNTIME_FIELDS = new Set(["trade", "experience", "work_area", "detail"]);
+
 function normalizeDemandSearchResponse(payload: DemandSearchResponse) {
   if (payload.ok !== true) {
     throw new Error("invalid_demand_search_response");
@@ -152,11 +155,6 @@ function formatWhen(value: string) {
     return `hace ${days} dias`;
   }
   return date.toLocaleString();
-}
-
-function formatCardLocation(department?: string | null) {
-  const normalized = String(department ?? "").trim();
-  return normalized || "El Salvador";
 }
 
 export function SellDemandsPage() {
@@ -244,6 +242,17 @@ export function SellDemandsPage() {
     () => resolveOrderedFlowFields(marketFields, "SELL"),
     [marketFields]
   );
+  const normalizedMarketKey = (marketKey ?? "").trim().toLowerCase();
+  const isHomeServicesMarket = normalizedMarketKey === "home_services";
+  const sellFormFields = useMemo(
+    () =>
+      isHomeServicesMarket
+        ? sellFields.filter((field) =>
+            HOME_SERVICES_RUNTIME_FIELDS.has(field.key.toLowerCase())
+          )
+        : sellFields,
+    [isHomeServicesMarket, sellFields]
+  );
 
   const dependencyMaps = useMemo(
     () => buildDependencyMaps(marketDependencies),
@@ -251,18 +260,12 @@ export function SellDemandsPage() {
   );
 
   const sellFieldKeysSignature = useMemo(
-    () => sellFields.map((field) => field.key).join("|"),
-    [sellFields]
+    () => sellFormFields.map((field) => field.key).join("|"),
+    [sellFormFields]
   );
 
   function getFieldLabel(field: MarketFieldDefinition) {
     const key = field.key.toLowerCase();
-    if (key === "warranty") {
-      return "¿Da Garantía con su Trabajo?";
-    }
-    if (key === "travel_range") {
-      return "¿Puede moverse entre?";
-    }
     if (key === "detail") {
       return "Detalles (opcional)";
     }
@@ -331,13 +334,13 @@ export function SellDemandsPage() {
       !marketKey ||
       !marketDefinitionLoaded ||
       marketDefinitionKey !== marketKey ||
-      sellFields.length === 0
+      sellFormFields.length === 0
     ) {
       return;
     }
 
     let cancelled = false;
-    const independentFields = sellFields.filter((field) => {
+    const independentFields = sellFormFields.filter((field) => {
       const inputType = field.inputType.toLowerCase();
       if (inputType === "text" || inputType === "number") {
         return false;
@@ -372,7 +375,7 @@ export function SellDemandsPage() {
     marketDefinitionLoaded,
     marketDefinitionKey,
     marketKey,
-    sellFields,
+    sellFormFields,
     token
   ]);
 
@@ -382,13 +385,13 @@ export function SellDemandsPage() {
       !marketKey ||
       !marketDefinitionLoaded ||
       marketDefinitionKey !== marketKey ||
-      sellFields.length === 0
+      sellFormFields.length === 0
     ) {
       return;
     }
 
     let cancelled = false;
-    const dependentFields = sellFields.filter((field) => {
+    const dependentFields = sellFormFields.filter((field) => {
       const inputType = field.inputType.toLowerCase();
       if (inputType === "text" || inputType === "number") {
         return false;
@@ -441,7 +444,7 @@ export function SellDemandsPage() {
     marketDefinitionLoaded,
     marketDefinitionKey,
     marketKey,
-    sellFields,
+    sellFormFields,
     structuredValues,
     token
   ]);
@@ -456,6 +459,23 @@ export function SellDemandsPage() {
 
   function optionsForField(fieldKey: string) {
     return optionsByFieldKey[fieldKey] ?? [];
+  }
+
+  function normalizeDisplayToken(value: string) {
+    const normalized = value.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      return "";
+    }
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  function resolveFieldDisplayValue(fieldKey: string, value: string) {
+    const options = optionsByFieldKey[fieldKey] ?? [];
+    const exact = options.find((option) => option.id === value)?.label;
+    if (exact) {
+      return exact;
+    }
+    return normalizeDisplayToken(value);
   }
 
   function updateField(fieldKey: string, value: string) {
@@ -579,7 +599,7 @@ export function SellDemandsPage() {
             }}
           />
 
-          {marketKey ? sellFields.map((field) => {
+          {marketKey ? sellFormFields.map((field) => {
             const inputType = field.inputType.toLowerCase();
             if (inputType === "text" || inputType === "number") {
               return (
@@ -603,7 +623,7 @@ export function SellDemandsPage() {
                 options={optionsForField(field.key)}
                 disabled={isFieldDisabled(field.key)}
                 onChange={(value) => updateField(field.key, value)}
-                placeholder={field.key === "travel_range" ? "Selecciona" : "Todos/as"}
+                placeholder="Todos/as"
               />
             );
           }) : null}
@@ -623,35 +643,36 @@ export function SellDemandsPage() {
       ) : null}
 
       {results.map((card) => {
-        const identityLine = formatMarketDemandIdentity({
-          orderedFields: sellFields,
-          values: card.identityValues,
-          separator: " - "
-        });
+        const displayIdentityValues = Object.fromEntries(
+          Object.entries(card.identityValues).map(([fieldKey, value]) => [
+            fieldKey,
+            resolveFieldDisplayValue(fieldKey, value)
+          ])
+        );
+        const automotiveLines =
+          normalizedMarketKey === "automotive" && isAutomotiveIdentity(displayIdentityValues)
+            ? formatAutomotiveCardLines(displayIdentityValues)
+            : null;
         const createdAt = card.created_at || card.audit?.createdAt || "";
-        const location = formatCardLocation(card.location?.department);
-        const narrative = isHomeServicesIdentity(card.identityValues)
+        const narrative = isHomeServicesIdentity(displayIdentityValues)
           ? formatHomeServicesNarrative({
-              intent: "BUY",
-              identityValues: card.identityValues,
-              locationDepartment: card.location?.department
-            })
+            intent: "BUY",
+            identityValues: displayIdentityValues
+          })
           : null;
         const requesterUserId = String(card.audit?.requesterUserId ?? "").trim();
         const reveal = revealState[card.id];
 
         return (
           <article key={card.id} className="card stack card-elevated demand-card-compact">
-            <p><strong>Busco</strong></p>
+            <p><strong>{narrative ? `Busco ${narrative.headline}` : `Busco ${automotiveLines?.partLine || "Pieza"}`}</strong></p>
             {narrative ? (
               <>
-                <p>{narrative.headline}</p>
-                <p>{narrative.locationLine}</p>
+                <p>{narrative.secondaryLine}</p>
               </>
             ) : (
               <>
-                <p>{identityLine}</p>
-                <p>{location}</p>
+                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
               </>
             )}
             <p>Creado: {formatWhen(createdAt)}</p>

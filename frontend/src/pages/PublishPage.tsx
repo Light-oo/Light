@@ -10,7 +10,9 @@ import { useProfileStatus } from "../context/ProfileStatusContext";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
+  formatAutomotiveCardLines,
   formatMarketListingIdentity,
+  isAutomotiveIdentity,
   type ListingIdentityValues
 } from "../lib/listingDisplay";
 import {
@@ -36,7 +38,7 @@ type PublishSuccessCard = {
   identityLine: string;
   secondaryLine?: string | null;
   priceLine?: string | null;
-  locationLine: string;
+  locationLine?: string | null;
   createdAtIso: string;
 };
 
@@ -88,6 +90,8 @@ type RepublishPrefillState = {
     };
   };
 };
+
+const HOME_SERVICES_RUNTIME_FIELDS = new Set(["trade", "experience", "work_area", "detail"]);
 
 export function PublishPage() {
   const { api, token } = useAuth();
@@ -225,7 +229,7 @@ export function PublishPage() {
   const publishFormFields = useMemo(
     () =>
       isHomeServicesMarket
-        ? sellFields.filter((field) => field.key.toLowerCase() !== "travel_range")
+        ? sellFields.filter((field) => HOME_SERVICES_RUNTIME_FIELDS.has(field.key.toLowerCase()))
         : sellFields,
     [isHomeServicesMarket, sellFields]
   );
@@ -234,22 +238,12 @@ export function PublishPage() {
     [marketDependencies]
   );
   const sellFieldKeysSignature = useMemo(
-    () => sellFields.map((field) => field.key).join("|"),
-    [sellFields]
+    () => publishFormFields.map((field) => field.key).join("|"),
+    [publishFormFields]
   );
-
-  function isDerivedProfileField(field: MarketFieldDefinition) {
-    return field.inputType.trim().toLowerCase() === "derived_profile_value";
-  }
 
   function getFieldLabel(field: MarketFieldDefinition) {
     const key = field.key.toLowerCase();
-    if (key === "warranty") {
-      return "¿Da Garantía con su Trabajo?";
-    }
-    if (key === "travel_range") {
-      return "¿Puede moverse entre?";
-    }
     if (key === "detail") {
       return "Detalles (opcional)";
     }
@@ -325,10 +319,14 @@ export function PublishPage() {
     if (!profileDepartmentId) {
       return;
     }
-    if (!sellFields.some((field) => field.key.toLowerCase() === "work_area")) {
+    if (!publishFormFields.some((field) => field.key.toLowerCase() === "work_area")) {
       return;
     }
     setStructuredValues((current) => {
+      const currentValue = String(current.work_area ?? "").trim();
+      if (currentValue.length > 0) {
+        return current;
+      }
       if (current.work_area === profileDepartmentId) {
         return current;
       }
@@ -337,7 +335,7 @@ export function PublishPage() {
         work_area: profileDepartmentId
       };
     });
-  }, [profileDepartmentId, sellFields]);
+  }, [profileDepartmentId, publishFormFields]);
 
   function canonicalizeFieldValue(fieldKey: string, value: string) {
     const normalized = value.trim();
@@ -351,7 +349,7 @@ export function PublishPage() {
   function canonicalizeStructuredValues(values: Record<string, string>) {
     let changed = false;
     const next: Record<string, string> = { ...values };
-    for (const field of sellFields) {
+    for (const field of publishFormFields) {
       const inputType = field.inputType.toLowerCase();
       if (inputType === "text" || inputType === "number") {
         continue;
@@ -385,7 +383,7 @@ export function PublishPage() {
     let changed = false;
     let next: Record<string, string> = { ...values };
 
-    for (const field of sellFields) {
+    for (const field of publishFormFields) {
       const inputType = field.inputType.toLowerCase();
       if (inputType === "text" || inputType === "number") {
         continue;
@@ -432,7 +430,7 @@ export function PublishPage() {
   }
 
   function getInvalidSelectValueMessage(values: Record<string, string>) {
-    for (const field of sellFields) {
+    for (const field of publishFormFields) {
       const inputType = field.inputType.toLowerCase();
       if (inputType === "text" || inputType === "number") {
         continue;
@@ -468,11 +466,11 @@ export function PublishPage() {
 
   useEffect(() => {
     setStructuredValues((current) => canonicalizeStructuredValues(current));
-  }, [sellFields, optionsByFieldKey]);
+  }, [publishFormFields, optionsByFieldKey]);
 
   useEffect(() => {
     setStructuredValues((current) => sanitizeStructuredValuesAgainstOptions(current));
-  }, [dependencyMaps.childKeysByParent, dependencyMaps.parentKeysByChild, optionsByFieldKey, sellFields]);
+  }, [dependencyMaps.childKeysByParent, dependencyMaps.parentKeysByChild, optionsByFieldKey, publishFormFields]);
 
   useEffect(() => {
     if (
@@ -480,13 +478,13 @@ export function PublishPage() {
       !marketKey ||
       !marketDefinitionLoaded ||
       marketDefinitionKey !== marketKey ||
-      sellFields.length === 0
+      publishFormFields.length === 0
     ) {
       return;
     }
 
     let cancelled = false;
-    const independentFields = sellFields.filter((field) => {
+    const independentFields = publishFormFields.filter((field) => {
       const inputType = field.inputType.toLowerCase();
       if (inputType === "text" || inputType === "number") {
         return false;
@@ -522,7 +520,7 @@ export function PublishPage() {
     marketDefinitionKey,
     marketDefinitionLoaded,
     marketKey,
-    sellFields,
+    publishFormFields,
     token
   ]);
 
@@ -532,13 +530,13 @@ export function PublishPage() {
       !marketKey ||
       !marketDefinitionLoaded ||
       marketDefinitionKey !== marketKey ||
-      sellFields.length === 0
+      publishFormFields.length === 0
     ) {
       return;
     }
 
     let cancelled = false;
-    const dependentFields = sellFields.filter((field) => {
+    const dependentFields = publishFormFields.filter((field) => {
       const inputType = field.inputType.toLowerCase();
       if (inputType === "text" || inputType === "number") {
         return false;
@@ -591,7 +589,7 @@ export function PublishPage() {
     marketDefinitionLoaded,
     marketDefinitionKey,
     marketKey,
-    sellFields,
+    publishFormFields,
     structuredValues,
     token
   ]);
@@ -623,9 +621,17 @@ export function PublishPage() {
   }
 
   function buildReadableItemName() {
+    const identityValues = resolvedIdentityValues();
+    if (isAutomotiveIdentity(identityValues)) {
+      const lines = formatAutomotiveCardLines(identityValues);
+      if (lines.partLine && lines.vehicleLine) {
+        return `${lines.partLine} / ${lines.vehicleLine}`;
+      }
+      return lines.partLine || lines.vehicleLine || "esta pieza";
+    }
     return formatMarketListingIdentity({
       orderedFields: publishFormFields,
-      values: resolvedIdentityValues(),
+      values: identityValues,
       separator: " - ",
       fallback: "esta pieza"
     });
@@ -634,26 +640,35 @@ export function PublishPage() {
   function buildSuccessCardTitle() {
     if (isHomeServicesMarket) {
       const values = resolvedIdentityValues();
-      const trade = String(values.trade ?? "").trim().toLowerCase();
-      const rawExperience = String(values.experience ?? "").trim();
-      const experience = rawExperience
-        ? (/años?|year/i.test(rawExperience) ? rawExperience : `${rawExperience} años de experiencia`)
-        : "";
-      const warrantyToken = String(values.warranty ?? "").trim().toLowerCase();
-      const hasWarranty = ["yes", "si", "sí", "true", "1"].includes(warrantyToken);
-      const warrantyText = hasWarranty ? "que garantiza su trabajo" : "sin garantía declarada";
-      const parts = ["Servicios de", trade || "servicio", experience ? `con ${experience}` : "", warrantyText].filter(
-        (part) => part.trim().length > 0
-      );
-      return `${parts.join(" ")}.`.replace(/\s+/g, " ").trim();
+      const trade = String(values.trade ?? "").trim();
+      return `Servicio de ${trade || "servicio"}`.replace(/\s+/g, " ").trim();
     }
 
+    const identityValues = resolvedIdentityValues();
+    if (isAutomotiveIdentity(identityValues)) {
+      return formatAutomotiveCardLines(identityValues).partLine || "Pieza";
+    }
     return formatMarketListingIdentity({
       orderedFields: publishFormFields,
-      values: resolvedIdentityValues(),
+      values: identityValues,
       separator: " / ",
       fallback: "-"
     });
+  }
+
+  function buildSuccessCardSecondaryLine() {
+    const values = resolvedIdentityValues();
+    if (isHomeServicesMarket) {
+      const experience = String(values.experience ?? "").trim();
+      return experience || null;
+    }
+
+    if (isAutomotiveIdentity(values)) {
+      const vehicle = formatAutomotiveCardLines(values).vehicleLine;
+      return vehicle || null;
+    }
+
+    return null;
   }
 
   function buildSuccessPriceLine() {
@@ -663,18 +678,6 @@ export function PublishPage() {
     }
     const formatted = Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(2);
     return `$${formatted}`;
-  }
-
-  function buildSuccessLocationLine() {
-    if (isHomeServicesMarket) {
-      const values = resolvedIdentityValues();
-      const workArea = String(values.work_area ?? "").trim();
-      const fallbackArea = locationDepartment.trim() || "El Salvador";
-      return `Zona de trabajo: ${workArea || fallbackArea}.`;
-    }
-
-    const normalized = locationDepartment.trim();
-    return normalized || "El Salvador";
   }
 
   function formatWhen(value: string) {
@@ -748,7 +751,7 @@ export function PublishPage() {
     event.preventDefault();
     if (loading) return;
 
-    if (sellFields.length === 0) {
+    if (publishFormFields.length === 0) {
       setError("No hay campos configurados para este mercado.");
       return;
     }
@@ -760,7 +763,7 @@ export function PublishPage() {
     }
 
     const missing = publishFormFields
-      .filter((field) => field.required && !isDerivedProfileField(field))
+      .filter((field) => field.required)
       .find((field) => !sanitizedValues[field.key]);
     if (missing) {
       setError(`Complete el campo requerido: ${getFieldLabel(missing)}.`);
@@ -808,9 +811,9 @@ export function PublishPage() {
 
       const nextSuccessCard = {
         identityLine: buildSuccessCardTitle(),
-        secondaryLine: null,
+        secondaryLine: buildSuccessCardSecondaryLine(),
         priceLine: requiresPrice ? buildSuccessPriceLine() : null,
-        locationLine: buildSuccessLocationLine(),
+        locationLine: null,
         createdAtIso: new Date().toISOString()
       };
       setSuccessCard(nextSuccessCard);
@@ -838,6 +841,14 @@ export function PublishPage() {
 
   return (
     <div className="screen screen-fill stack gap-lg">
+      <button
+        type="button"
+        className="ghost"
+        onClick={() => navigate("/sell-demands")}
+      >
+        Buscar Demandas
+      </button>
+
       <Card className="stack">
         <form className="stack" onSubmit={onSubmit}>
           <FilterSelect
@@ -857,30 +868,6 @@ export function PublishPage() {
 
           {marketKey ? publishFormFields.map((field) => {
             const inputType = field.inputType.toLowerCase();
-            if (isDerivedProfileField(field)) {
-              const derivedValueId = structuredValues[field.key] ?? profileDepartmentId;
-              const derivedValueLabel = derivedValueId ? labelFor(field.key, derivedValueId) || derivedValueId : "";
-              if (profileDepartmentId) {
-                return (
-                  <label key={field.key} className="derived-profile-field">
-                    {getFieldLabel(field)}
-                    <input type="text" value={derivedValueLabel} readOnly />
-                    <span className="info">Se usa su departamento de perfil.</span>
-                  </label>
-                );
-              }
-              return (
-                <FilterSelect
-                  key={field.key}
-                  label={getFieldLabel(field)}
-                  required={field.required}
-                  disabled={isFieldDisabled(field.key)}
-                  value={structuredValues[field.key] ?? ""}
-                  options={optionsForField(field.key)}
-                  onChange={(value) => updateStructuredField(field.key, value)}
-                />
-              );
-            }
             if (inputType === "text" || inputType === "number") {
               return (
                 <label key={field.key}>
@@ -935,14 +922,9 @@ export function PublishPage() {
       {successCard ? (
         <div className="stack gap-sm">
           <article className="card stack card-elevated demand-card-compact">
-            <p><strong>{isHomeServicesMarket ? "Ofrezco" : "Vendo"}</strong></p>
-            <p>
-              {successCard.priceLine
-                ? `${successCard.identityLine} - ${successCard.priceLine}`
-                : successCard.identityLine}
-            </p>
+            <p><strong>{`${isHomeServicesMarket ? "Ofrezco" : "Vendo"} ${successCard.identityLine}`}</strong></p>
             {successCard.secondaryLine ? <p>{successCard.secondaryLine}</p> : null}
-            <p>{successCard.locationLine}</p>
+            {successCard.priceLine ? <p>{`Precio: ${successCard.priceLine}`}</p> : null}
             <p>Creado: {formatWhen(successCard.createdAtIso)}</p>
           </article>
           <div className="stack gap-sm publish-success-actions">
@@ -967,14 +949,6 @@ export function PublishPage() {
       ) : null}
 
       {error ? <p className="error">{error}</p> : null}
-
-      <button
-        type="button"
-        className="ghost publish-bottom-action publish-bottom-button"
-        onClick={() => navigate("/sell-demands")}
-      >
-        Buscar Demandas
-      </button>
     </div>
   );
 }

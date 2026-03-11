@@ -10,8 +10,9 @@ import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
   extractIdentityValuesForFields,
+  formatAutomotiveCardLines,
   formatHomeServicesNarrative,
-  formatMarketListingIdentity,
+  isAutomotiveIdentity,
   isHomeServicesIdentity
 } from "../lib/listingDisplay";
 import {
@@ -83,6 +84,8 @@ type MarketDefinitionResponse = {
     }>;
   };
 };
+
+const HOME_SERVICES_RUNTIME_FIELDS = new Set(["trade", "experience", "work_area", "detail"]);
 
 export function BuySearchPage() {
   const { api, token } = useAuth();
@@ -182,7 +185,9 @@ export function BuySearchPage() {
   const searchFormFields = useMemo(
     () =>
       isHomeServicesMarket
-        ? buyFields.filter((field) => field.key.toLowerCase() !== "travel_range")
+        ? buyFields.filter((field) =>
+            HOME_SERVICES_RUNTIME_FIELDS.has(field.key.toLowerCase())
+          )
         : buyFields,
     [buyFields, isHomeServicesMarket]
   );
@@ -592,12 +597,6 @@ export function BuySearchPage() {
 
   function getFieldLabel(field: MarketFieldDefinition) {
     const key = field.key.toLowerCase();
-    if (key === "warranty") {
-      return "¿Da Garantía con su Trabajo?";
-    }
-    if (key === "travel_range") {
-      return "¿Puede moverse entre?";
-    }
     if (key === "detail") {
       return "Detalles (opcional)";
     }
@@ -741,11 +740,6 @@ export function BuySearchPage() {
     return date.toLocaleString();
   }
 
-  function formatCardLocation(city?: string | null) {
-    const normalizedCity = String(city ?? "").trim();
-    return normalizedCity || "El Salvador";
-  }
-
   return (
     <div className="screen stack gap-lg">
       <Card className="stack">
@@ -826,35 +820,37 @@ export function BuySearchPage() {
           return null;
         }
         const identityValues = extractIdentityValuesForFields({ identity: card.identityValues }, searchFormFields);
-        const identityLabel = formatMarketListingIdentity({
-          orderedFields: searchFormFields,
-          values: identityValues,
-          separator: " / "
-        });
-        const formattedPrice = `$${card.price.amount}`;
-        const city = card.location.department ?? null;
-        const locationLabel = formatCardLocation(city);
+        const automotiveLines =
+          isAutomotiveIdentity(identityValues) && normalizedMarketKey === "automotive"
+            ? formatAutomotiveCardLines(identityValues)
+            : null;
+        const priceAmount = Number(card.price.amount);
+        const formattedPrice = Number.isFinite(priceAmount) ? `$${priceAmount}` : null;
         const narrative = isHomeServicesIdentity(identityValues)
           ? formatHomeServicesNarrative({
               intent: "SELL",
-              identityValues,
-              locationDepartment: city
+              identityValues
             })
           : null;
 
         const reveal = revealState[card.id];
         return (
           <article key={card.id} className="card stack card-elevated">
-            <p><strong>{narrative ? "Ofrezco" : "Vendo"}</strong></p>
+            <p>
+              <strong>
+                {narrative
+                  ? `Ofrezco ${narrative.headline}`
+                  : `Vendo ${automotiveLines?.partLine || "Pieza"}`}
+              </strong>
+            </p>
             {narrative ? (
               <>
-                <p>{narrative.headline}</p>
-                <p>{narrative.locationLine}</p>
+                <p>{narrative.secondaryLine}</p>
               </>
             ) : (
               <>
-                <p>{`${identityLabel} - ${formattedPrice}`}</p>
-                <p>{locationLabel}</p>
+                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
+                {formattedPrice ? <p>{`Precio: ${formattedPrice}`}</p> : null}
               </>
             )}
             <p>Creado: {formatWhen(card.created_at || card.audit?.createdAt || "")}</p>
