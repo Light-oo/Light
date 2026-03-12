@@ -47,29 +47,29 @@ const EXPECTED_SIGNATURE =
 
 function createSeedData(): Record<string, SeedRow[]> {
   const fields = [
-    { id: "f-brand", key: "brand", label_es: "Marca", sort_order: 1, option_source_ref: "brands" },
-    { id: "f-model", key: "model", label_es: "Modelo", sort_order: 2, option_source_ref: "models" },
+    { id: "f-brand", key: "brand", label_es: "Marca", sort_order: 1, option_source_ref: "catalog_options" },
+    { id: "f-model", key: "model", label_es: "Modelo", sort_order: 2, option_source_ref: "catalog_options" },
     {
       id: "f-year",
       key: "year",
       label_es: "Año",
       sort_order: 3,
-      option_source_ref: "year_options"
+      option_source_ref: "catalog_options"
     },
     {
       id: "f-item-type",
       key: "item_type",
       label_es: "Sistema",
       sort_order: 4,
-      option_source_ref: "item_types"
+      option_source_ref: "catalog_options"
     },
-    { id: "f-part", key: "part", label_es: "Pieza", sort_order: 5, option_source_ref: "parts" }
+    { id: "f-part", key: "part", label_es: "Pieza", sort_order: 5, option_source_ref: "catalog_options" }
   ].map((field) => ({
     ...field,
     market_key: "automotive",
     required: true,
     active: true,
-    option_source_type: "table"
+    option_source_type: "catalog_field"
   }));
 
   const baseRules = fields.flatMap((field) => [
@@ -137,8 +137,10 @@ function createSeedData(): Record<string, SeedRow[]> {
         sort_order: 1,
         required: true,
         active: true,
-        option_source_type: "catalog",
-        option_source_ref: "item_types"
+        option_source_type: "catalog_field",
+        option_source_ref: "catalog_options",
+        item_specs_column: "item_type_id",
+        demand_column: "item_type_id"
       },
       {
         id: "f-home-service",
@@ -148,8 +150,10 @@ function createSeedData(): Record<string, SeedRow[]> {
         sort_order: 2,
         required: true,
         active: true,
-        option_source_type: "catalog",
-        option_source_ref: "parts"
+        option_source_type: "catalog_field",
+        option_source_ref: "catalog_options",
+        item_specs_column: "part_id",
+        demand_column: "part_id"
       }
     ],
     market_field_dependencies: [
@@ -270,6 +274,23 @@ function createSeedData(): Record<string, SeedRow[]> {
         sort_order: 5,
         active: true
       }
+    ],
+    catalog_options: [
+      { id: "opt-brand-honda", market_key: "automotive", field_key: "brand", option_key: "honda", label: "Honda", sort_order: 1, active: true, parent_option_id: null },
+      { id: "opt-brand-toyota", market_key: "automotive", field_key: "brand", option_key: "toyota", label: "Toyota", sort_order: 2, active: true, parent_option_id: null },
+      { id: "opt-model-corolla", market_key: "automotive", field_key: "model", option_key: "corolla", label: "Corolla", sort_order: 1, active: true, parent_option_id: "opt-brand-toyota" },
+      { id: "opt-model-yaris", market_key: "automotive", field_key: "model", option_key: "yaris", label: "Yaris", sort_order: 2, active: true, parent_option_id: "opt-brand-toyota" },
+      { id: "opt-model-civic", market_key: "automotive", field_key: "model", option_key: "civic", label: "Civic", sort_order: 3, active: true, parent_option_id: "opt-brand-honda" },
+      { id: "opt-year-2000", market_key: "automotive", field_key: "year", option_key: "2000", label: "2000", sort_order: 1, active: true, parent_option_id: null },
+      { id: "opt-year-2010", market_key: "automotive", field_key: "year", option_key: "2010", label: "2010", sort_order: 2, active: true, parent_option_id: null },
+      { id: "opt-system-motor", market_key: "automotive", field_key: "item_type", option_key: "motor", label: "Motor", sort_order: 1, active: true, parent_option_id: null },
+      { id: "opt-system-electrico", market_key: "automotive", field_key: "item_type", option_key: "electrico", label: "Electrico", sort_order: 2, active: true, parent_option_id: null },
+      { id: "opt-part-alternador", market_key: "automotive", field_key: "part", option_key: "alternador", label: "Alternador", sort_order: 1, active: true, parent_option_id: "opt-system-motor" },
+      { id: "opt-part-bomba", market_key: "automotive", field_key: "part", option_key: "bomba", label: "Bomba", sort_order: 2, active: true, parent_option_id: "opt-system-motor" },
+      { id: "opt-part-bateria", market_key: "automotive", field_key: "part", option_key: "bateria", label: "Bateria", sort_order: 3, active: true, parent_option_id: "opt-system-electrico" },
+      { id: "opt-home-category-electricidad", market_key: "home_services", field_key: "category", option_key: "electricidad", label: "Electricidad", sort_order: 1, active: true, parent_option_id: null },
+      { id: "opt-home-service-instalacion", market_key: "home_services", field_key: "service", option_key: "instalacion_electrica", label: "Instalacion electrica", sort_order: 1, active: true, parent_option_id: "opt-home-category-electricidad" },
+      { id: "opt-home-service-reparacion", market_key: "home_services", field_key: "service", option_key: "reparacion_electrica", label: "Reparacion electrica", sort_order: 2, active: true, parent_option_id: "opt-home-category-electricidad" }
     ],
     brands: [
       { id: "brand-toyota", label_es: "Toyota", active: true },
@@ -576,8 +597,8 @@ const tests: TestCase[] = [
 
       const itemSpecs = ctx.supabase.snapshot("item_specs");
       assert.equal(itemSpecs.length, 1);
-      assert.equal(itemSpecs[0].item_type_id, "item-electricidad");
-      assert.equal(itemSpecs[0].part_id, "part-home-instalacion-electrica");
+      assert.equal(itemSpecs[0].item_type_id, "opt-home-category-electricidad");
+      assert.equal(itemSpecs[0].part_id, "opt-home-service-instalacion");
       assert.equal(itemSpecs[0].category_id, undefined);
       assert.equal(itemSpecs[0].service_id, undefined);
 

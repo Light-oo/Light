@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { PasswordField } from "../components/PasswordField";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
 
@@ -72,29 +73,23 @@ export function SignupPage() {
           />
         </label>
 
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            minLength={8}
-            autoComplete="new-password"
-          />
-        </label>
+        <PasswordField
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          required
+          minLength={8}
+          autoComplete="new-password"
+        />
 
-        <label>
-          Confirm Password
-          <input
-            type="password"
-            value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)}
-            required
-            minLength={8}
-            autoComplete="new-password"
-          />
-        </label>
+        <PasswordField
+          label="Confirm Password"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          required
+          minLength={8}
+          autoComplete="new-password"
+        />
 
         <div className="auth-checkbox-row">
           <input

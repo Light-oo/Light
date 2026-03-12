@@ -10,9 +10,8 @@ import { useProfileStatus } from "../context/ProfileStatusContext";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
-  formatAutomotiveCardLines,
+  buildGenericCardContent,
   formatMarketListingIdentity,
-  isAutomotiveIdentity,
   type ListingIdentityValues
 } from "../lib/listingDisplay";
 import {
@@ -90,8 +89,6 @@ type RepublishPrefillState = {
     };
   };
 };
-
-const HOME_SERVICES_RUNTIME_FIELDS = new Set(["trade", "experience", "work_area", "detail"]);
 
 export function PublishPage() {
   const { api, token } = useAuth();
@@ -215,6 +212,9 @@ export function PublishPage() {
     () => resolveOrderedFlowFields(marketFields, "SELL"),
     [marketFields]
   );
+  const isPriceMetadataField = (fieldKey: string) => fieldKey.trim().toLowerCase() === "price";
+  const isDetailMetadataField = (fieldKey: string) =>
+    ["detail", "details", "details_text", "detalle"].includes(fieldKey.trim().toLowerCase());
   const profileDepartmentId = useMemo(() => {
     const departmentId = profileStatus?.departmentId;
     return departmentId === null || departmentId === undefined ? "" : String(departmentId);
@@ -225,13 +225,9 @@ export function PublishPage() {
   );
   const normalizedMarketKey = (marketKey ?? "").trim().toLowerCase();
   const requiresPrice = normalizedMarketKey === "automotive";
-  const isHomeServicesMarket = normalizedMarketKey === "home_services";
   const publishFormFields = useMemo(
-    () =>
-      isHomeServicesMarket
-        ? sellFields.filter((field) => HOME_SERVICES_RUNTIME_FIELDS.has(field.key.toLowerCase()))
-        : sellFields,
-    [isHomeServicesMarket, sellFields]
+    () => sellFields.filter((field) => !isPriceMetadataField(field.key)),
+    [sellFields]
   );
   const dependencyMaps = useMemo(
     () => buildDependencyMaps(marketDependencies),
@@ -241,6 +237,42 @@ export function PublishPage() {
     () => publishFormFields.map((field) => field.key).join("|"),
     [publishFormFields]
   );
+  const visiblePublishFields = useMemo(
+    () =>
+      publishFormFields.filter((field) =>
+        hasDependencyParentsSelected(
+          field.key,
+          structuredValues,
+          dependencyMaps.parentKeysByChild
+        )
+      ),
+    [dependencyMaps.parentKeysByChild, publishFormFields, structuredValues]
+  );
+  const visiblePrimaryPublishFields = useMemo(
+    () => visiblePublishFields.filter((field) => !isDetailMetadataField(field.key)),
+    [visiblePublishFields]
+  );
+  const visibleDetailPublishFields = useMemo(
+    () => visiblePublishFields.filter((field) => isDetailMetadataField(field.key)),
+    [visiblePublishFields]
+  );
+  const requiredPublishFieldsComplete = useMemo(
+    () =>
+      publishFormFields
+        .filter((field) => field.required)
+        .every((field) => {
+          const value = structuredValues[field.key];
+          return typeof value === "string" && value.trim().length > 0;
+        }),
+    [publishFormFields, structuredValues]
+  );
+  const validPriceReady = useMemo(() => {
+    if (!requiresPrice) {
+      return true;
+    }
+    const parsed = Number(priceAmount);
+    return Number.isFinite(parsed) && parsed > 0;
+  }, [priceAmount, requiresPrice]);
 
   function getFieldLabel(field: MarketFieldDefinition) {
     const key = field.key.toLowerCase();
@@ -622,13 +654,6 @@ export function PublishPage() {
 
   function buildReadableItemName() {
     const identityValues = resolvedIdentityValues();
-    if (isAutomotiveIdentity(identityValues)) {
-      const lines = formatAutomotiveCardLines(identityValues);
-      if (lines.partLine && lines.vehicleLine) {
-        return `${lines.partLine} / ${lines.vehicleLine}`;
-      }
-      return lines.partLine || lines.vehicleLine || "esta pieza";
-    }
     return formatMarketListingIdentity({
       orderedFields: publishFormFields,
       values: identityValues,
@@ -637,38 +662,14 @@ export function PublishPage() {
     });
   }
 
-  function buildSuccessCardTitle() {
-    if (isHomeServicesMarket) {
-      const values = resolvedIdentityValues();
-      const trade = String(values.trade ?? "").trim();
-      return `Servicio de ${trade || "servicio"}`.replace(/\s+/g, " ").trim();
-    }
-
+  function buildSuccessCardContent() {
     const identityValues = resolvedIdentityValues();
-    if (isAutomotiveIdentity(identityValues)) {
-      return formatAutomotiveCardLines(identityValues).partLine || "Pieza";
-    }
-    return formatMarketListingIdentity({
+    return buildGenericCardContent({
+      intentLabel: "Vendo",
       orderedFields: publishFormFields,
       values: identityValues,
-      separator: " / ",
-      fallback: "-"
+      fallbackLabel: "Publicacion"
     });
-  }
-
-  function buildSuccessCardSecondaryLine() {
-    const values = resolvedIdentityValues();
-    if (isHomeServicesMarket) {
-      const experience = String(values.experience ?? "").trim();
-      return experience || null;
-    }
-
-    if (isAutomotiveIdentity(values)) {
-      const vehicle = formatAutomotiveCardLines(values).vehicleLine;
-      return vehicle || null;
-    }
-
-    return null;
   }
 
   function buildSuccessPriceLine() {
@@ -808,10 +809,11 @@ export function PublishPage() {
       const response = await api.post<unknown>("/listings", payload);
       const normalized = normalizeSellPublishResponse(response);
       debugLog("publish.success", { listingId: normalized.listingId });
+      const successContent = buildSuccessCardContent();
 
       const nextSuccessCard = {
-        identityLine: buildSuccessCardTitle(),
-        secondaryLine: buildSuccessCardSecondaryLine(),
+        identityLine: successContent.title.replace(/^Vendo\s+/i, ""),
+        secondaryLine: successContent.secondaryLine,
         priceLine: requiresPrice ? buildSuccessPriceLine() : null,
         locationLine: null,
         createdAtIso: new Date().toISOString()
@@ -866,7 +868,7 @@ export function PublishPage() {
             }}
           />
 
-          {marketKey ? publishFormFields.map((field) => {
+          {marketKey ? visiblePrimaryPublishFields.map((field) => {
             const inputType = field.inputType.toLowerCase();
             if (inputType === "text" || inputType === "number") {
               return (
@@ -911,8 +913,41 @@ export function PublishPage() {
             />
           ) : null}
 
-          {marketKey ? (
-            <button type="submit" disabled={loading}>
+          {marketKey ? visibleDetailPublishFields.map((field) => {
+            const inputType = field.inputType.toLowerCase();
+            if (inputType === "text" || inputType === "number") {
+              return (
+                <label key={field.key}>
+                  {getFieldLabel(field)}
+                  <input
+                    type={inputType}
+                    value={structuredValues[field.key] ?? ""}
+                    required={field.required}
+                    disabled={isFieldDisabled(field.key)}
+                    onChange={(event) => updateStructuredField(field.key, event.target.value)}
+                  />
+                </label>
+              );
+            }
+
+            return (
+              <FilterSelect
+                key={field.key}
+                label={getFieldLabel(field)}
+                required={field.required}
+                disabled={isFieldDisabled(field.key)}
+                value={structuredValues[field.key] ?? ""}
+                options={optionsForField(field.key)}
+                onChange={(value) => updateStructuredField(field.key, value)}
+              />
+            );
+          }) : null}
+
+          {marketKey && requiredPublishFieldsComplete ? (
+            <button
+              type="submit"
+              disabled={loading || !requiredPublishFieldsComplete || !validPriceReady}
+            >
               {loading ? "Publicando..." : "Publicar"}
             </button>
           ) : null}
@@ -922,7 +957,7 @@ export function PublishPage() {
       {successCard ? (
         <div className="stack gap-sm">
           <article className="card stack card-elevated demand-card-compact">
-            <p><strong>{`${isHomeServicesMarket ? "Ofrezco" : "Vendo"} ${successCard.identityLine}`}</strong></p>
+            <p><strong>{`Vendo ${successCard.identityLine}`}</strong></p>
             {successCard.secondaryLine ? <p>{successCard.secondaryLine}</p> : null}
             {successCard.priceLine ? <p>{`Precio: ${successCard.priceLine}`}</p> : null}
             <p>Creado: {formatWhen(successCard.createdAtIso)}</p>

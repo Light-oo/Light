@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useMarket } from "../context/MarketContext";
-import { Card } from "../components/Card";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
+  buildGenericCardContent,
   extractIdentityValuesForFields,
-  formatAutomotiveCardLines,
-  formatHomeServicesNarrative,
-  isAutomotiveIdentity,
-  isHomeServicesIdentity,
   parseSignatureIdentityValues
 } from "../lib/listingDisplay";
 import {
@@ -129,6 +125,8 @@ function ListingGroup({
   rows,
   orderedFields,
   mode,
+  expanded,
+  onToggle,
   onSetInactive,
   onSetActive,
   togglingById
@@ -137,14 +135,19 @@ function ListingGroup({
   rows: MyListingRow[];
   orderedFields: MarketFieldDefinition[];
   mode: "active" | "inactive";
+  expanded: boolean;
+  onToggle: () => void;
   onSetInactive: (row: MyListingRow) => void;
   onSetActive: (row: MyListingRow) => void;
   togglingById: Record<string, boolean>;
 }) {
   return (
-    <Card className="stack">
-      <h3 className="section-title">{title}</h3>
-      {rows.map((row) => {
+    <section className="stack">
+      <button type="button" className="ghost section-toggle" onClick={onToggle} aria-expanded={expanded}>
+        <span className="section-title">{title}</span>
+        <span aria-hidden="true">{expanded ? "−" : "+"}</span>
+      </button>
+      {expanded ? rows.map((row) => {
         const specs = row.item_specs;
         const signatureIdentity = parseSignatureIdentityValues((row as any).intention_signature);
         const displayFields =
@@ -157,35 +160,20 @@ function ListingGroup({
           year: row.year ?? specs?.year,
           identity: signatureIdentity
         }, displayFields);
-        const automotiveLines = isAutomotiveIdentity(identityValues)
-          ? formatAutomotiveCardLines(identityValues)
-          : null;
+        const cardContent = buildGenericCardContent({
+          intentLabel: "Vendo",
+          orderedFields: displayFields,
+          values: identityValues,
+          fallbackLabel: "Publicacion"
+        });
         const price = resolveListingPrice(row);
-        const narrative = isHomeServicesIdentity(identityValues)
-          ? formatHomeServicesNarrative({
-              intent: "SELL",
-              identityValues
-            })
-          : null;
         return (
           <article key={row.id} className="card stack listing-row">
             <p>
-              <strong>
-                {narrative
-                  ? `Ofrezco ${narrative.headline}`
-                  : `Vendo ${automotiveLines?.partLine || "Pieza"}`}
-              </strong>
+              <strong>{cardContent.title}</strong>
             </p>
-            {narrative ? (
-              <>
-                <p>{narrative.secondaryLine}</p>
-              </>
-            ) : (
-              <>
-                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
-                {price !== "—" ? <p>{`Precio: ${price}`}</p> : null}
-              </>
-            )}
+            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+            {price !== "—" ? <p>{`Precio: ${price}`}</p> : null}
             <p>Creado: {formatWhen(row.created_at)}</p>
             {mode === "active" ? (
               <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
@@ -198,8 +186,8 @@ function ListingGroup({
             )}
           </article>
         );
-      })}
-    </Card>
+      }) : null}
+    </section>
   );
 }
 
@@ -207,19 +195,26 @@ function DemandGroup({
   title,
   rows,
   orderedFields,
+  expanded,
+  onToggle,
   onSetInactive,
   togglingById
 }: {
   title: string;
   rows: MyDemandRow[];
   orderedFields: MarketFieldDefinition[];
+  expanded: boolean;
+  onToggle: () => void;
   onSetInactive: (row: MyDemandRow) => void;
   togglingById: Record<string, boolean>;
 }) {
   return (
-    <Card className="stack">
-      <h3 className="section-title">{title}</h3>
-      {rows.map((row) => {
+    <section className="stack">
+      <button type="button" className="ghost section-toggle" onClick={onToggle} aria-expanded={expanded}>
+        <span className="section-title">{title}</span>
+        <span aria-hidden="true">{expanded ? "−" : "+"}</span>
+      </button>
+      {expanded ? rows.map((row) => {
         const signatureIdentity = parseSignatureIdentityValues((row as any).intention_signature);
         const displayFields =
           orderedFields.length > 0 ? orderedFields : inferDisplayFieldsFromIdentity(signatureIdentity);
@@ -230,34 +225,19 @@ function DemandGroup({
           year: row.year,
           identity: signatureIdentity
         }, displayFields);
-        const automotiveLines = isAutomotiveIdentity(identityValues)
-          ? formatAutomotiveCardLines(identityValues)
-          : null;
-        const narrative = isHomeServicesIdentity(identityValues)
-          ? formatHomeServicesNarrative({
-              intent: "BUY",
-              identityValues
-            })
-          : null;
+        const cardContent = buildGenericCardContent({
+          intentLabel: "Busco",
+          orderedFields: displayFields,
+          values: identityValues,
+          fallbackLabel: "Publicacion"
+        });
         const isActive = row.status === "open";
         return (
           <article key={row.id} className="card stack listing-row">
             <p>
-              <strong>
-                {narrative
-                  ? `Busco ${narrative.headline}`
-                  : `Busco ${automotiveLines?.partLine || "Pieza"}`}
-              </strong>
+              <strong>{cardContent.title}</strong>
             </p>
-            {narrative ? (
-              <>
-                <p>{narrative.secondaryLine}</p>
-              </>
-            ) : (
-              <>
-                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
-              </>
-            )}
+            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
             <p>Creado: {formatWhen(row.created_at)}</p>
             {isActive ? (
               <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
@@ -266,8 +246,8 @@ function DemandGroup({
             ) : null}
           </article>
         );
-      })}
-    </Card>
+      }) : null}
+    </section>
   );
 }
 
@@ -277,6 +257,11 @@ export function MyListingsPage() {
   const [rows, setRows] = useState<MyListingRow[]>([]);
   const [demands, setDemands] = useState<MyDemandRow[]>([]);
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
+  const [expandedSections, setExpandedSections] = useState({
+    activeDemands: false,
+    activeListings: false,
+    inactiveListings: false
+  });
   const [error, setError] = useState<string | null>(null);
   const [togglingById, setTogglingById] = useState<Record<string, boolean>>({});
   const [togglingDemandById, setTogglingDemandById] = useState<Record<string, boolean>>({});
@@ -392,6 +377,14 @@ export function MyListingsPage() {
     () => resolveOrderedFlowFields(marketFields, "BUY"),
     [marketFields]
   );
+
+  function toggleSection(section: keyof typeof expandedSections) {
+    setExpandedSections((current) => ({
+      ...current,
+      [section]: !current[section]
+    }));
+  }
+
   return (
     <div className="screen stack gap-lg">
       {error ? <p className="error">{error}</p> : null}
@@ -400,6 +393,8 @@ export function MyListingsPage() {
         title={`Búsquedas Activas (${activeDemands.length})`}
         rows={activeDemands}
         orderedFields={demandDisplayFields}
+        expanded={expandedSections.activeDemands}
+        onToggle={() => toggleSection("activeDemands")}
         onSetInactive={setDemandInactive}
         togglingById={togglingDemandById}
       />
@@ -409,6 +404,8 @@ export function MyListingsPage() {
         rows={activeRows}
         orderedFields={listingDisplayFields}
         mode="active"
+        expanded={expandedSections.activeListings}
+        onToggle={() => toggleSection("activeListings")}
         onSetInactive={setInactive}
         onSetActive={setActive}
         togglingById={togglingById}
@@ -419,6 +416,8 @@ export function MyListingsPage() {
         rows={inactiveRows}
         orderedFields={listingDisplayFields}
         mode="inactive"
+        expanded={expandedSections.inactiveListings}
+        onToggle={() => toggleSection("inactiveListings")}
         onSetInactive={setInactive}
         onSetActive={setActive}
         togglingById={togglingById}

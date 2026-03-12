@@ -12,7 +12,7 @@ export function AppLayout() {
   const isAccountRoute = location.pathname.startsWith("/account");
   const isSellActive =
     isPublishRoute || location.pathname.startsWith("/sell-demands");
-  const activeModeLabel = isSellActive ? "Vendo" : "Busco";
+  const isBuyActive = !isSellActive;
   const tokenBalance = useMemo(
     () => (typeof profileStatus?.tokens === "number" ? profileStatus.tokens : null),
     [profileStatus?.tokens]
@@ -47,7 +47,12 @@ export function AppLayout() {
             onClick={() => navigate(resolveHeaderModeTarget())}
             title={isSearchRoute ? "Ir a Vendo" : "Ir a Busco"}
           >
-            <span className="active-word">{activeModeLabel}</span>
+            <span className={isBuyActive ? "header-mode-option is-active" : "header-mode-option is-inactive"}>
+              Busco
+            </span>
+            <span className={isSellActive ? "header-mode-option is-active" : "header-mode-option is-inactive"}>
+              Vendo
+            </span>
           </button>
         </div>
 

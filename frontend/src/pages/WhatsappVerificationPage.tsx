@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useProfileStatus } from "../context/ProfileStatusContext";
@@ -47,9 +47,11 @@ export function WhatsappVerificationPage() {
   const [verificationCode, setVerificationCode] = useState("");
   const [startLoading, setStartLoading] = useState(false);
   const [confirmLoading, setConfirmLoading] = useState(false);
-  const [showCodeStep, setShowCodeStep] = useState(false);
+  const [verificationStep, setVerificationStep] = useState<"start" | "confirm">("start");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [openingHelpWhatsapp, setOpeningHelpWhatsapp] = useState(false);
+  const startVerificationInFlightRef = useRef(false);
 
   const redirectTarget =
     typeof (location.state as { from?: unknown } | null)?.from === "string"
@@ -84,7 +86,9 @@ export function WhatsappVerificationPage() {
     setWhatsappLocal(parsedWhatsapp.localNumber);
     setSelectedWhatsappCountry(parsedWhatsapp.country);
     if (profileStatus?.whatsappVerificationStatus === "pending") {
-      setShowCodeStep(true);
+      setVerificationStep("confirm");
+    } else {
+      setVerificationStep("start");
     }
   }, [
     loadingProfileStatus,
@@ -94,9 +98,31 @@ export function WhatsappVerificationPage() {
     redirectTarget
   ]);
 
+  async function openHelpWhatsapp() {
+    if (openingHelpWhatsapp) {
+      return;
+    }
+
+    setOpeningHelpWhatsapp(true);
+    setError(null);
+
+    try {
+      window.location.assign(`https://wa.me/50376283646?text=${encodeURIComponent("Hola")}`);
+    } catch (err) {
+      setError(toUiErrorMessage(err));
+    } finally {
+      setOpeningHelpWhatsapp(false);
+    }
+  }
+
   async function onStartVerification(event: FormEvent) {
     event.preventDefault();
-    if (startLoading || confirmLoading) {
+    if (
+      startVerificationInFlightRef.current ||
+      startLoading ||
+      confirmLoading ||
+      verificationStep !== "start"
+    ) {
       return;
     }
 
@@ -105,6 +131,7 @@ export function WhatsappVerificationPage() {
       return;
     }
 
+    startVerificationInFlightRef.current = true;
     setStartLoading(true);
     setError(null);
     setInfo(null);
@@ -116,18 +143,16 @@ export function WhatsappVerificationPage() {
 
       const nextCode = String(response.data.whatsappVerificationCode ?? "").trim();
       const message = [
-        `Su código de verificación es: ${nextCode}`,
-        "Por favor introdúzcalo en la plataforma."
+        `Su codigo de verificacion es: ${nextCode}`,
+        "Por favor introduzcalo en la plataforma."
       ].join("\n");
       const whatsappUrl = `https://wa.me/${verificationWhatsappDigits}?text=${encodeURIComponent(message)}`;
 
       const popup = window.open(whatsappUrl, "_blank", "noopener,noreferrer");
-      if (!popup) {
-        window.location.href = whatsappUrl;
-      }
+      void popup;
 
       await refreshProfileStatus();
-      setShowCodeStep(true);
+      setVerificationStep("confirm");
       setVerificationCode("");
       setInfo("Revise WhatsApp e ingrese el codigo para completar la verificacion.");
     } catch (err) {
@@ -137,6 +162,7 @@ export function WhatsappVerificationPage() {
         setError(toUiErrorMessage(err));
       }
     } finally {
+      startVerificationInFlightRef.current = false;
       setStartLoading(false);
     }
   }
@@ -184,35 +210,37 @@ export function WhatsappVerificationPage() {
     <div className="screen auth-screen">
       <h2>Verificar WhatsApp</h2>
       <div className="stack auth-form">
-        <form onSubmit={onStartVerification} className="stack">
-          <WhatsappSvInput
-            label="WhatsApp"
-            localNumber={whatsappLocal}
-            onChangeLocalNumber={setWhatsappLocal}
-            countryIso={selectedWhatsappCountry.iso}
-            onChangeCountryIso={(iso) => setSelectedWhatsappCountry(getWhatsappCountryByIso(iso))}
-            required
-            disabled={startLoading || confirmLoading}
-            errorText={whatsappInlineError}
-          />
-          <button
-            type="submit"
-            disabled={
-              startLoading ||
-              confirmLoading ||
-              whatsappLocal.length < WHATSAPP_LOCAL_MIN_DIGITS ||
-              whatsappLocal.length > WHATSAPP_LOCAL_MAX_DIGITS
-            }
-          >
-            {startLoading ? "Enviando..." : "Verificar WhatsApp"}
-          </button>
-        </form>
+        {verificationStep === "start" ? (
+          <form onSubmit={onStartVerification} className="stack">
+            <WhatsappSvInput
+              label="WhatsApp"
+              localNumber={whatsappLocal}
+              onChangeLocalNumber={setWhatsappLocal}
+              countryIso={selectedWhatsappCountry.iso}
+              onChangeCountryIso={(iso) => setSelectedWhatsappCountry(getWhatsappCountryByIso(iso))}
+              required
+              disabled={startLoading || confirmLoading}
+              errorText={whatsappInlineError}
+            />
+            <button
+              type="submit"
+              disabled={
+                startLoading ||
+                confirmLoading ||
+                whatsappLocal.length < WHATSAPP_LOCAL_MIN_DIGITS ||
+                whatsappLocal.length > WHATSAPP_LOCAL_MAX_DIGITS
+              }
+            >
+              {startLoading ? "Enviando..." : "Verificar WhatsApp"}
+            </button>
+          </form>
+        ) : null}
 
-        {showCodeStep ? (
+        {verificationStep === "confirm" ? (
           <form onSubmit={onConfirmVerification} className="stack">
-            <p>Su código de verificación es:</p>
+            <p>Su codigo de verificacion es:</p>
             <label>
-              Código
+              Codigo
               <input
                 type="text"
                 value={verificationCode}
@@ -232,6 +260,10 @@ export function WhatsappVerificationPage() {
 
         {error ? <p className="error">{error}</p> : null}
         {info ? <p className="info">{info}</p> : null}
+
+        <button type="button" className="account-help-button" onClick={openHelpWhatsapp} disabled={openingHelpWhatsapp}>
+          {openingHelpWhatsapp ? "Abriendo..." : "¿Necesita ayuda?"}
+        </button>
       </div>
     </div>
   );

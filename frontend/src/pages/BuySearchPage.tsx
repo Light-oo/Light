@@ -9,11 +9,8 @@ import { buildBuySearchQuery, normalizeBuySearchResponse } from "../lib/buyEngin
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
+  buildGenericCardContent,
   extractIdentityValuesForFields,
-  formatAutomotiveCardLines,
-  formatHomeServicesNarrative,
-  isAutomotiveIdentity,
-  isHomeServicesIdentity
 } from "../lib/listingDisplay";
 import {
   buildDependencyMaps,
@@ -84,8 +81,6 @@ type MarketDefinitionResponse = {
     }>;
   };
 };
-
-const HOME_SERVICES_RUNTIME_FIELDS = new Set(["trade", "experience", "work_area", "detail"]);
 
 export function BuySearchPage() {
   const { api, token } = useAuth();
@@ -180,16 +175,9 @@ export function BuySearchPage() {
     () => resolveOrderedFlowFields(marketFields, "BUY"),
     [marketFields]
   );
-  const normalizedMarketKey = (marketKey ?? "").trim().toLowerCase();
-  const isHomeServicesMarket = normalizedMarketKey === "home_services";
   const searchFormFields = useMemo(
-    () =>
-      isHomeServicesMarket
-        ? buyFields.filter((field) =>
-            HOME_SERVICES_RUNTIME_FIELDS.has(field.key.toLowerCase())
-          )
-        : buyFields,
-    [buyFields, isHomeServicesMarket]
+    () => buyFields.filter((field) => field.key.trim().toLowerCase() !== "price"),
+    [buyFields]
   );
   const marketOptions = useMemo<Option[]>(
     () => availableMarkets.map((market) => ({ id: market.key, label: market.label })),
@@ -206,6 +194,27 @@ export function BuySearchPage() {
   const buyFieldKeysSignature = useMemo(
     () => searchFormFields.map((field) => field.key).join("|"),
     [searchFormFields]
+  );
+  const visibleSearchFields = useMemo(
+    () =>
+      searchFormFields.filter((field) =>
+        hasDependencyParentsSelected(
+          field.key,
+          structuredValues,
+          dependencyMaps.parentKeysByChild
+        )
+      ),
+    [dependencyMaps.parentKeysByChild, searchFormFields, structuredValues]
+  );
+  const requiredSearchFieldsComplete = useMemo(
+    () =>
+      searchFormFields
+        .filter((field) => field.required)
+        .every((field) => {
+          const value = structuredValues[field.key];
+          return typeof value === "string" && value.trim().length > 0;
+        }),
+    [searchFormFields, structuredValues]
   );
 
   function areSameOptions(left: Option[], right: Option[]) {
@@ -577,7 +586,7 @@ export function BuySearchPage() {
           } else if (normalized.demandAction === "existing") {
             setMessage("La búsqueda ya existe.");
             } else {
-            setMessage("Estamos buscando a alguien que pueda ayudarle. Le contactaremos pronto.");
+            setMessage("No se encontraron resultados por ahora. Su búsqueda ha sido registrada y la plataforma intentará encontrar a alguien que pueda ayudarle.");
             }
           }
       })
@@ -757,7 +766,7 @@ export function BuySearchPage() {
             }}
           />
 
-          {marketKey ? searchFormFields.map((field) => {
+          {marketKey ? visibleSearchFields.map((field) => {
             const inputType = field.inputType.toLowerCase();
             if (inputType === "text" || inputType === "number") {
               return (
@@ -799,8 +808,11 @@ export function BuySearchPage() {
             </label>
           ) : null}
 
-          {marketKey ? (
-            <button type="submit" disabled={loading || isSearchQueued}>
+          {marketKey && requiredSearchFieldsComplete ? (
+            <button
+              type="submit"
+              disabled={loading || isSearchQueued || !requiredSearchFieldsComplete}
+            >
               {loading || isSearchQueued ? "Buscando..." : "Buscar"}
             </button>
           ) : null}
@@ -820,39 +832,23 @@ export function BuySearchPage() {
           return null;
         }
         const identityValues = extractIdentityValuesForFields({ identity: card.identityValues }, searchFormFields);
-        const automotiveLines =
-          isAutomotiveIdentity(identityValues) && normalizedMarketKey === "automotive"
-            ? formatAutomotiveCardLines(identityValues)
-            : null;
         const priceAmount = Number(card.price.amount);
         const formattedPrice = Number.isFinite(priceAmount) ? `$${priceAmount}` : null;
-        const narrative = isHomeServicesIdentity(identityValues)
-          ? formatHomeServicesNarrative({
-              intent: "SELL",
-              identityValues
-            })
-          : null;
+        const cardContent = buildGenericCardContent({
+          intentLabel: "Vendo",
+          orderedFields: searchFormFields,
+          values: identityValues,
+          fallbackLabel: "Publicacion"
+        });
 
         const reveal = revealState[card.id];
         return (
           <article key={card.id} className="card stack card-elevated">
             <p>
-              <strong>
-                {narrative
-                  ? `Ofrezco ${narrative.headline}`
-                  : `Vendo ${automotiveLines?.partLine || "Pieza"}`}
-              </strong>
+              <strong>{cardContent.title}</strong>
             </p>
-            {narrative ? (
-              <>
-                <p>{narrative.secondaryLine}</p>
-              </>
-            ) : (
-              <>
-                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
-                {formattedPrice ? <p>{`Precio: ${formattedPrice}`}</p> : null}
-              </>
-            )}
+            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+            {formattedPrice ? <p>{`Precio: ${formattedPrice}`}</p> : null}
             <p>Creado: {formatWhen(card.created_at || card.audit?.createdAt || "")}</p>
 
             <RevealButton

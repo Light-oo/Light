@@ -378,37 +378,6 @@ function getDemandColumn(field: ResolvedMarketField, rules: ResolvedMarketRule[]
     }
   }
 
-  const sourceRefRaw =
-    toStringOrNull(
-      field.raw.option_source_ref ??
-      field.raw.options_source_ref ??
-      field.raw.source_ref ??
-      field.raw.catalog_source_ref
-    ) ??
-    toStringOrNull(
-      ruleMap.get("option_source_ref") ??
-      ruleMap.get("options_source_ref") ??
-      ruleMap.get("source_ref") ??
-      ruleMap.get("catalog_source_ref")
-    );
-  const sourceRef = (sourceRefRaw ?? "").trim().toLowerCase();
-  const sourceToken = sourceRef.includes(".") ? sourceRef.split(".").pop() ?? sourceRef : sourceRef;
-  if (sourceToken === "brands" || sourceToken === "brand") {
-    return "brand_id";
-  }
-  if (sourceToken === "models" || sourceToken === "model") {
-    return "model_id";
-  }
-  if (sourceToken === "year_options" || sourceToken === "years" || sourceToken === "year") {
-    return "year_id";
-  }
-  if (sourceToken === "item_types" || sourceToken === "item_type") {
-    return "item_type_id";
-  }
-  if (sourceToken === "parts" || sourceToken === "part") {
-    return "part_id";
-  }
-
   return null;
 }
 

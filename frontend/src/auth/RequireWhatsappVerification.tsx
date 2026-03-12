@@ -6,9 +6,9 @@ import { useProfileStatus } from "../context/ProfileStatusContext";
 export function RequireWhatsappVerification() {
   const location = useLocation();
   const { token } = useAuth();
-  const { profileStatus, loading } = useProfileStatus();
+  const { profileStatus, loading, resolved } = useProfileStatus();
 
-  if (loading) {
+  if (loading || (token && !resolved)) {
     return <GlobalLoader visible mode="overlay" />;
   }
 

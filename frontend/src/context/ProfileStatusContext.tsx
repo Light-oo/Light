@@ -31,6 +31,7 @@ type ProfileStatusResponse = {
 type ProfileStatusContextValue = {
   profileStatus: ProfileStatus | null;
   loading: boolean;
+  resolved: boolean;
   refreshProfileStatus: () => Promise<ProfileStatus | null>;
 };
 
@@ -67,6 +68,8 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
   const { api, token, ready } = useAuth();
   const [profileStatus, setProfileStatus] = useState<ProfileStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resolved, setResolved] = useState(false);
+  const profileStatusRef = useRef<ProfileStatus | null>(null);
   const lastFetchedAtRef = useRef<number>(0);
   const inFlightRef = useRef<Promise<ProfileStatus | null> | null>(null);
 
@@ -74,16 +77,21 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
     (forceRefresh: boolean) => {
       if (!token) {
         setProfileStatus(null);
+        profileStatusRef.current = null;
         lastFetchedAtRef.current = 0;
         sharedStatusCache = null;
         sharedStatusInFlight = null;
+        setLoading(false);
+        setResolved(true);
         return Promise.resolve(null);
       }
 
       const now = Date.now();
       const isFresh = now - lastFetchedAtRef.current < PROFILE_STATUS_TTL_MS;
-      if (!forceRefresh && profileStatus && isFresh) {
-        return Promise.resolve(profileStatus);
+      if (!forceRefresh && profileStatusRef.current && isFresh) {
+        setLoading(false);
+        setResolved(true);
+        return Promise.resolve(profileStatusRef.current);
       }
 
       const cache = sharedStatusCache;
@@ -93,19 +101,33 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
         now - cache.fetchedAt < PROFILE_STATUS_TTL_MS;
       if (hasFreshSharedCache && cache) {
         setProfileStatus(cache.status);
+        profileStatusRef.current = cache.status;
         lastFetchedAtRef.current = cache.fetchedAt;
         setLoading(false);
+        setResolved(true);
         return Promise.resolve(cache.status);
       }
 
       if (sharedStatusInFlight?.token === token) {
         setLoading(true);
+        setResolved(false);
         return sharedStatusInFlight.promise.then((status) => {
           setProfileStatus(status);
+          profileStatusRef.current = status;
           if (sharedStatusCache?.token === token) {
             lastFetchedAtRef.current = sharedStatusCache.fetchedAt;
           }
+          setResolved(true);
           return status;
+        }).catch(() => {
+          setProfileStatus(null);
+          profileStatusRef.current = null;
+          lastFetchedAtRef.current = 0;
+          sharedStatusCache = null;
+          setResolved(true);
+          return null;
+        }).finally(() => {
+          setLoading(false);
         });
       }
 
@@ -114,11 +136,13 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
       }
 
       setLoading(true);
+      setResolved(false);
       const request = api
         .get<ProfileStatusResponse>("/profile/status", undefined, { suppressGlobalLoader: true })
         .then((response) => {
           const normalized = normalizeProfileStatus(response.data);
           setProfileStatus(normalized);
+          profileStatusRef.current = normalized;
           const fetchedAt = Date.now();
           lastFetchedAtRef.current = fetchedAt;
           sharedStatusCache = { token, fetchedAt, status: normalized };
@@ -126,6 +150,7 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
         })
         .catch(() => {
           setProfileStatus(null);
+          profileStatusRef.current = null;
           lastFetchedAtRef.current = 0;
           sharedStatusCache = null;
           return null;
@@ -136,13 +161,14 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
             sharedStatusInFlight = null;
           }
           setLoading(false);
+          setResolved(true);
         });
 
       inFlightRef.current = request;
       sharedStatusInFlight = { token, promise: request };
       return request;
     },
-    [api, profileStatus, token]
+    [api, token]
   );
 
   const refreshProfileStatus = useCallback(() => loadProfileStatus(true), [loadProfileStatus]);
@@ -154,11 +180,14 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
 
     if (!token) {
       setProfileStatus(null);
+      profileStatusRef.current = null;
       setLoading(false);
+      setResolved(true);
       lastFetchedAtRef.current = 0;
       return;
     }
 
+    setResolved(false);
     void loadProfileStatus(false);
   }, [loadProfileStatus, ready, token]);
 
@@ -166,9 +195,10 @@ export function ProfileStatusProvider({ children }: { children: React.ReactNode 
     () => ({
       profileStatus,
       loading,
+      resolved,
       refreshProfileStatus
     }),
-    [loading, profileStatus, refreshProfileStatus]
+    [loading, profileStatus, refreshProfileStatus, resolved]
   );
 
   return <ProfileStatusContext.Provider value={value}>{children}</ProfileStatusContext.Provider>;

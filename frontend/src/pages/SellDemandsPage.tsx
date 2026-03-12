@@ -7,10 +7,7 @@ import { useMarket } from "../context/MarketContext";
 import { useOptions } from "../context/OptionsContext";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
-  formatAutomotiveCardLines,
-  formatHomeServicesNarrative,
-  isAutomotiveIdentity,
-  isHomeServicesIdentity
+  buildGenericCardContent
 } from "../lib/listingDisplay";
 import {
   buildDependencyMaps,
@@ -104,8 +101,6 @@ type RevealResponse = {
     didConsume: boolean;
   };
 };
-
-const HOME_SERVICES_RUNTIME_FIELDS = new Set(["trade", "experience", "work_area", "detail"]);
 
 function normalizeDemandSearchResponse(payload: DemandSearchResponse) {
   if (payload.ok !== true) {
@@ -242,16 +237,9 @@ export function SellDemandsPage() {
     () => resolveOrderedFlowFields(marketFields, "SELL"),
     [marketFields]
   );
-  const normalizedMarketKey = (marketKey ?? "").trim().toLowerCase();
-  const isHomeServicesMarket = normalizedMarketKey === "home_services";
   const sellFormFields = useMemo(
-    () =>
-      isHomeServicesMarket
-        ? sellFields.filter((field) =>
-            HOME_SERVICES_RUNTIME_FIELDS.has(field.key.toLowerCase())
-          )
-        : sellFields,
-    [isHomeServicesMarket, sellFields]
+    () => sellFields.filter((field) => field.key.trim().toLowerCase() !== "price"),
+    [sellFields]
   );
 
   const dependencyMaps = useMemo(
@@ -649,32 +637,20 @@ export function SellDemandsPage() {
             resolveFieldDisplayValue(fieldKey, value)
           ])
         );
-        const automotiveLines =
-          normalizedMarketKey === "automotive" && isAutomotiveIdentity(displayIdentityValues)
-            ? formatAutomotiveCardLines(displayIdentityValues)
-            : null;
+        const cardContent = buildGenericCardContent({
+          intentLabel: "Busco",
+          orderedFields: sellFormFields,
+          values: displayIdentityValues,
+          fallbackLabel: "Publicacion"
+        });
         const createdAt = card.created_at || card.audit?.createdAt || "";
-        const narrative = isHomeServicesIdentity(displayIdentityValues)
-          ? formatHomeServicesNarrative({
-            intent: "BUY",
-            identityValues: displayIdentityValues
-          })
-          : null;
         const requesterUserId = String(card.audit?.requesterUserId ?? "").trim();
         const reveal = revealState[card.id];
 
         return (
           <article key={card.id} className="card stack card-elevated demand-card-compact">
-            <p><strong>{narrative ? `Busco ${narrative.headline}` : `Busco ${automotiveLines?.partLine || "Pieza"}`}</strong></p>
-            {narrative ? (
-              <>
-                <p>{narrative.secondaryLine}</p>
-              </>
-            ) : (
-              <>
-                {automotiveLines?.vehicleLine ? <p>{automotiveLines.vehicleLine}</p> : null}
-              </>
-            )}
+            <p><strong>{cardContent.title}</strong></p>
+            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
             <p>Creado: {formatWhen(createdAt)}</p>
             {requesterUserId && requesterUserId === userId ? (
               <p className="info">Esta es su búsqueda.</p>

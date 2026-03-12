@@ -137,7 +137,7 @@ function normalizeFieldRuleMap(rules: ResolvedMarketRule[], fieldKey: string) {
 
 function getSourceDefinition(field: ResolvedMarketField, ruleMap: Record<string, unknown>) {
   const raw = field.raw;
-  const sourceType =
+  const rawSourceType =
     toStringOrNull(
       pickFirst(raw, [
         "option_source_type",
@@ -176,8 +176,21 @@ function getSourceDefinition(field: ResolvedMarketField, ruleMap: Record<string,
       ])
     );
 
+  const normalizedSourceType = rawSourceType.toLowerCase();
+  const sourceType = [
+    "catalog_field",
+    "catalog",
+    "table",
+    "view",
+    "catalog_table",
+    "catalog_view",
+    "supabase_table"
+  ].includes(normalizedSourceType)
+    ? "catalog_field"
+    : normalizedSourceType;
+
   return {
-    sourceType: sourceType.toLowerCase(),
+    sourceType,
     sourceRef
   };
 }
@@ -404,8 +417,9 @@ async function loadCatalogFieldRows(params: {
   supabase: ReturnType<typeof createSupabaseServiceRole>;
   resolvedMarket: ResolvedMarket;
   fieldKey: string;
+  parentOptionIds?: string[];
 }) {
-  const { supabase, resolvedMarket, fieldKey } = params;
+  const { supabase, resolvedMarket, fieldKey, parentOptionIds } = params;
   const marketId = toStringOrNull(resolvedMarket.market.id);
   const marketKey = toStringOrNull(resolvedMarket.market.key);
 
@@ -416,9 +430,22 @@ async function loadCatalogFieldRows(params: {
       .eq("field_key", fieldKey)
       .eq("active", true)
       .order("sort_order", { ascending: true });
+    if (parentOptionIds && parentOptionIds.length > 0) {
+      if (parentOptionIds.length === 1) {
+        query = query.eq("parent_option_id", parentOptionIds[0]);
+      } else {
+        query = query.in("parent_option_id", parentOptionIds);
+      }
+    }
     if (scope) {
       query = query.eq(scope.column, scope.value);
     }
+    traceVocabulary("catalog_field.query", {
+      marketKey: resolvedMarket.market.key,
+      fieldKey,
+      parentOptionIds: parentOptionIds ?? [],
+      scope: scope ? `${scope.column}=${scope.value}` : null
+    });
     return query;
   };
 
@@ -1006,8 +1033,110 @@ function requiresStrictMarketScope(
     return toBoolean(explicitRequired, true);
   }
 
-  const sourceToken = normalizeSourceRefToken(sourceRef);
-  return sourceToken === "item_types" || sourceToken === "parts";
+  return false;
+}
+
+function normalizeComparableToken(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function optionMatchesSelectedValue(option: VocabularyOption, selectedValue: unknown) {
+  const selectedTokens = toComparableValues(selectedValue).map(normalizeComparableToken);
+  if (selectedTokens.length === 0) {
+    return false;
+  }
+
+  const optionTokens = [option.key, option.id ?? "", option.label]
+    .map((value) => toStringOrNull(value) ?? "")
+    .filter((value) => value.length > 0)
+    .map(normalizeComparableToken);
+
+  return selectedTokens.some((token) => optionTokens.includes(token));
+}
+
+async function resolveCatalogFieldDependencyOptionIds(params: {
+  field: ResolvedMarketField;
+  resolvedMarket: ResolvedMarket;
+  selectedValues: SelectedValues;
+  supabase: ReturnType<typeof createSupabaseServiceRole>;
+}) {
+  const { field, resolvedMarket, selectedValues, supabase } = params;
+  const dependencies = resolvedMarket.dependencies
+    .filter(
+      (dependency) =>
+        (dependency.fieldKey ?? "").toLowerCase() === field.key.toLowerCase() &&
+        dependency.active
+    )
+    .sort((left, right) => left.order - right.order);
+
+  const dependsOn: Record<string, unknown> = {};
+  if (dependencies.length === 0) {
+    return {
+      dependsOn,
+      parentOptionIds: [] as string[]
+    };
+  }
+
+  const parentOptionIds: string[] = [];
+  for (const dependency of dependencies) {
+    const parentKey = dependency.dependsOnFieldKey;
+    if (!parentKey) {
+      continue;
+    }
+
+    const selectedParentValue = selectedValues[parentKey];
+    if (selectedParentValue === undefined || selectedParentValue === null || selectedParentValue === "") {
+      return {
+        dependsOn,
+        parentOptionIds: [] as string[],
+        missingParentValue: true as const
+      };
+    }
+
+    dependsOn[parentKey] = selectedParentValue;
+    const parentField = resolvedMarket.fields.find(
+      (candidate) => candidate.key.toLowerCase() === parentKey.toLowerCase()
+    );
+    if (!parentField) {
+      return {
+        dependsOn,
+        parentOptionIds: [] as string[],
+        unresolvedDependencyColumn: true as const
+      };
+    }
+
+    const parentVocabulary = await loadFieldVocabulary({
+      marketKey: resolvedMarket.market.key,
+      fieldKey: parentField.key,
+      selectedValues,
+      resolvedMarket,
+      supabase
+    });
+    const matchedParentOption = parentVocabulary.options.find((option) =>
+      optionMatchesSelectedValue(option, selectedParentValue)
+    );
+    const parentOptionId = toStringOrNull(matchedParentOption?.id);
+    if (!parentOptionId) {
+      return {
+        dependsOn,
+        parentOptionIds: [] as string[],
+        missingParentValue: true as const
+      };
+    }
+    parentOptionIds.push(parentOptionId);
+  }
+
+  traceVocabulary("catalog_field.dependency", {
+    marketKey: resolvedMarket.market.key,
+    fieldKey: field.key,
+    dependsOn,
+    parentOptionIds
+  });
+
+  return {
+    dependsOn,
+    parentOptionIds
+  };
 }
 
 async function resolveVocabularyForField(
@@ -1039,6 +1168,44 @@ async function resolveVocabularyForField(
     );
   }
 
+  if (sourceType === "catalog_field") {
+    const dependencyState = await resolveCatalogFieldDependencyOptionIds({
+      field,
+      resolvedMarket,
+      selectedValues,
+      supabase
+    });
+
+    if ((dependencyState as any).missingParentValue || (dependencyState as any).unresolvedDependencyColumn) {
+      return {
+        fieldKey: field.key,
+        source: {
+          type: sourceType,
+          ref: sourceRef
+        },
+        dependsOn: dependencyState.dependsOn,
+        options: []
+      };
+    }
+
+    const rows = await loadCatalogFieldRows({
+      supabase,
+      resolvedMarket,
+      fieldKey: field.key,
+      parentOptionIds: dependencyState.parentOptionIds
+    });
+    const options = normalizeCatalogFieldOptions(rows);
+    return {
+      fieldKey: field.key,
+      source: {
+        type: sourceType,
+        ref: sourceRef
+      },
+      dependsOn: dependencyState.dependsOn,
+      options
+    };
+  }
+
   const dependencyFilters = await buildDependencyFilters(
     field,
     resolvedMarket,
@@ -1056,24 +1223,6 @@ async function resolveVocabularyForField(
       },
       dependsOn: dependencyFilters.dependsOn,
       options: []
-    };
-  }
-
-  if (sourceType === "catalog_field") {
-    const rows = await loadCatalogFieldRows({
-      supabase,
-      resolvedMarket,
-      fieldKey: field.key
-    });
-    const options = normalizeCatalogFieldOptions(rows);
-    return {
-      fieldKey: field.key,
-      source: {
-        type: sourceType,
-        ref: sourceRef
-      },
-      dependsOn: dependencyFilters.dependsOn,
-      options
     };
   }
 

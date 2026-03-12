@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { PasswordField } from "../components/PasswordField";
 import { toUiErrorMessage } from "../lib/errorMessages";
 
 export function LoginPage() {
@@ -50,16 +51,13 @@ export function LoginPage() {
           />
         </label>
 
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            autoComplete="current-password"
-          />
-        </label>
+        <PasswordField
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          required
+          autoComplete="current-password"
+        />
 
         {error ? <p className="error">{error}</p> : null}
 

@@ -86,7 +86,40 @@ function toBoolean(value: unknown, defaultValue = false): boolean {
   return defaultValue;
 }
 
-function getFieldRuleMap(field: ResolvedMarketField, rules: ResolvedMarketRule[]): FieldRuleMap {
+function normalizeFlowScope(value: unknown): ValidationFlow | "ALL" | null {
+  const normalized = toStringOrNull(value)?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "buy") {
+    return "BUY";
+  }
+  if (normalized === "sell") {
+    return "SELL";
+  }
+  if (["all", "both", "any", "*"].includes(normalized)) {
+    return "ALL";
+  }
+  return null;
+}
+
+function ruleAppliesToFlow(rule: ResolvedMarketRule, flow: ValidationFlow) {
+  const rawScope =
+    (rule.raw as RawRecord | undefined)?.flow_scope ??
+    (rule.raw as RawRecord | undefined)?.flowScope ??
+    (rule.raw as RawRecord | undefined)?.scope;
+  const scope = normalizeFlowScope(rawScope);
+  if (!scope || scope === "ALL") {
+    return true;
+  }
+  return scope === flow;
+}
+
+function getFieldRuleMap(
+  field: ResolvedMarketField,
+  rules: ResolvedMarketRule[],
+  flow: ValidationFlow
+): FieldRuleMap {
   const out = new Map<string, unknown>();
 
   for (const [rawKey, rawValue] of Object.entries(field.raw)) {
@@ -97,10 +130,38 @@ function getFieldRuleMap(field: ResolvedMarketField, rules: ResolvedMarketRule[]
     if ((rule.fieldKey ?? "").toLowerCase() !== field.key.toLowerCase()) {
       continue;
     }
+    if (!ruleAppliesToFlow(rule, flow)) {
+      continue;
+    }
     out.set(rule.ruleKey.toLowerCase(), rule.ruleValue);
   }
 
   return out;
+}
+
+function resolveRequiredForFlow(
+  field: ResolvedMarketField,
+  rules: ResolvedMarketRule[],
+  flow: ValidationFlow,
+  ruleMap: FieldRuleMap
+) {
+  const requiredRules = rules.filter(
+    (rule) =>
+      (rule.fieldKey ?? "").toLowerCase() === field.key.toLowerCase() &&
+      rule.ruleKey.toLowerCase() === "required"
+  );
+  const matchingRequiredRules = requiredRules.filter((rule) => ruleAppliesToFlow(rule, flow));
+
+  if (matchingRequiredRules.length > 0) {
+    const selectedRule = matchingRequiredRules[matchingRequiredRules.length - 1];
+    return toBoolean(selectedRule.ruleValue, false);
+  }
+
+  if (requiredRules.length > 0) {
+    return false;
+  }
+
+  return isRequiredForFlow(ruleMap, flow, field.required);
 }
 
 function readRuleBoolean(ruleMap: FieldRuleMap, key: string, defaultValue = false): boolean {
@@ -123,6 +184,49 @@ function readRuleBoolean(ruleMap: FieldRuleMap, key: string, defaultValue = fals
   }
 
   return toBoolean(value, defaultValue);
+}
+
+function readRuleText(ruleMap: FieldRuleMap, key: string): string | null {
+  const value = ruleMap.get(key.toLowerCase());
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const row = value as RawRecord;
+    if (row.value !== undefined) {
+      return toStringOrNull(row.value)?.toLowerCase() ?? null;
+    }
+  }
+
+  return toStringOrNull(value)?.toLowerCase() ?? null;
+}
+
+function isRequiredForFlow(
+  ruleMap: FieldRuleMap,
+  flow: ValidationFlow,
+  fieldRequiredDefault: boolean
+) {
+  const explicitRequired = readRuleBoolean(ruleMap, "required", fieldRequiredDefault);
+  const requiredOn = readRuleText(ruleMap, "required_on");
+  if (!requiredOn) {
+    return explicitRequired;
+  }
+
+  if (["none", "never", "false", "0"].includes(requiredOn)) {
+    return false;
+  }
+  if (["both", "all", "any", "true", "1"].includes(requiredOn)) {
+    return true;
+  }
+  if (requiredOn === "buy") {
+    return flow === "BUY";
+  }
+  if (requiredOn === "sell") {
+    return flow === "SELL";
+  }
+
+  return explicitRequired;
 }
 
 function pickPayloadValue(
@@ -196,10 +300,10 @@ export async function validateMarketPayload(
 
   for (const field of resolvedMarket.fields) {
     const fieldKey = field.key.toLowerCase();
-    const ruleMap = getFieldRuleMap(field, resolvedMarket.rules);
+    const ruleMap = getFieldRuleMap(field, resolvedMarket.rules, flow);
     const rawValue = pickPayloadValue(payloadByKey, fieldKey);
     const hasProvidedValue = rawValue !== undefined && rawValue !== null && String(rawValue).trim() !== "";
-    const required = readRuleBoolean(ruleMap, "required", field.required);
+    const required = resolveRequiredForFlow(field, resolvedMarket.rules, flow, ruleMap);
     const allowedInBuy = readRuleBoolean(ruleMap, "allowed_in_buy", true);
     const allowedInSell = readRuleBoolean(ruleMap, "allowed_in_sell", true);
     const catalogOnly = readRuleBoolean(ruleMap, "catalog_only", false);
