@@ -470,7 +470,7 @@ export function AccountPage() {
             <p>Los Tokens se usan para revelar contactos.</p>
             <p>1 Token = 1 contacto revelado.</p>
             <p>Cada Token cuesta $0.25.</p>
-            <p>El monto mínimo de compra es $1.00 (5 Tokens).</p>
+            <p>El monto mínimo de compra es $1.00 (4 Tokens).</p>
           </Card>
 
           <Card className="stack gap-sm token-swipe-card">

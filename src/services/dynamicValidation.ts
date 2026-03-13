@@ -164,6 +164,32 @@ function resolveRequiredForFlow(
   return isRequiredForFlow(ruleMap, flow, field.required);
 }
 
+export async function isMarketFieldRequiredForFlow(input: {
+  marketKey: string;
+  fieldKey: string;
+  flow: ValidationFlow;
+  resolvedMarket?: ResolvedMarket;
+  supabase?: ReturnType<typeof createSupabaseServiceRole>;
+}) {
+  const supabase = input.supabase ?? createSupabaseServiceRole();
+  const resolvedMarket =
+    input.resolvedMarket ??
+    (await resolveMarketConfiguration(input.marketKey, {
+      supabase
+    }));
+
+  const field = resolvedMarket.fields.find(
+    (candidate) => candidate.key.toLowerCase() === input.fieldKey.trim().toLowerCase()
+  );
+
+  if (!field) {
+    return false;
+  }
+
+  const ruleMap = getFieldRuleMap(field, resolvedMarket.rules, input.flow);
+  return resolveRequiredForFlow(field, resolvedMarket.rules, input.flow, ruleMap);
+}
+
 function readRuleBoolean(ruleMap: FieldRuleMap, key: string, defaultValue = false): boolean {
   const value = ruleMap.get(key.toLowerCase());
   if (value === undefined) {
@@ -242,6 +268,14 @@ function normalizeInputPayloadKeys(payload: Record<string, unknown>) {
     out[key.trim().toLowerCase()] = value;
   }
   return out;
+}
+
+function isScalarCompatibleValue(value: unknown) {
+  return (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
 }
 
 export async function validateMarketPayload(
@@ -327,6 +361,15 @@ export async function validateMarketPayload(
     }
 
     if (!hasProvidedValue) {
+      continue;
+    }
+
+    if (!isScalarCompatibleValue(rawValue)) {
+      errors.push({
+        fieldKey,
+        code: "invalid_field_value",
+        message: `Field "${fieldKey}" must be a scalar value.`
+      });
       continue;
     }
 

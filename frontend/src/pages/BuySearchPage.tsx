@@ -16,6 +16,7 @@ import {
   buildDependencyMaps,
   dependencyQueryForField,
   hasDependencyParentsSelected,
+  isFieldRequiredInFlow,
   normalizeMarketDependencies,
   normalizeMarketFields,
   resetDependentValues,
@@ -61,6 +62,10 @@ type MarketDefinitionResponse = {
       label?: string;
       label_es?: string;
       required?: boolean;
+      requiredInBuy?: boolean;
+      required_in_buy?: boolean;
+      requiredInSell?: boolean;
+      required_in_sell?: boolean;
       order?: number;
       sortOrder?: number;
       type?: string | null;
@@ -209,7 +214,7 @@ export function BuySearchPage() {
   const requiredSearchFieldsComplete = useMemo(
     () =>
       searchFormFields
-        .filter((field) => field.required)
+        .filter((field) => isFieldRequiredInFlow(field, "BUY"))
         .every((field) => {
           const value = structuredValues[field.key];
           return typeof value === "string" && value.trim().length > 0;
@@ -655,7 +660,7 @@ export function BuySearchPage() {
     }
 
     const missing = searchFormFields
-      .filter((field) => field.required)
+      .filter((field) => isFieldRequiredInFlow(field, "BUY"))
       .find((field) => !sanitizedValues[field.key]);
     if (missing) {
       setError(`Complete el campo requerido: ${getFieldLabel(missing)}.`);
@@ -775,7 +780,7 @@ export function BuySearchPage() {
                   <input
                     type={inputType}
                     value={structuredValues[field.key] ?? ""}
-                    required={field.required}
+                    required={isFieldRequiredInFlow(field, "BUY")}
                     disabled={isFieldDisabled(field.key)}
                     onChange={(event) => updateField(field.key, event.target.value)}
                   />
@@ -789,7 +794,7 @@ export function BuySearchPage() {
                 label={getFieldLabel(field)}
                 value={structuredValues[field.key] ?? ""}
                 options={optionsForField(field.key)}
-                required={field.required}
+                required={isFieldRequiredInFlow(field, "BUY")}
                 disabled={isFieldDisabled(field.key)}
                 onChange={(value) => updateField(field.key, value)}
               />
@@ -811,6 +816,7 @@ export function BuySearchPage() {
           {marketKey && requiredSearchFieldsComplete ? (
             <button
               type="submit"
+              className="primary-action-button"
               disabled={loading || isSearchQueued || !requiredSearchFieldsComplete}
             >
               {loading || isSearchQueued ? "Buscando..." : "Buscar"}

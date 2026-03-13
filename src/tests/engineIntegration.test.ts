@@ -542,9 +542,10 @@ const tests: TestCase[] = [
         accessToken: "token-seller-a",
         userId: "seller-a",
         marketKey: ctx.marketKey,
-        payload: VALID_AUTOMOTIVE_PAYLOAD,
-        priceAmount: 75,
-        priceType: "fixed",
+        payload: {
+          ...VALID_AUTOMOTIVE_PAYLOAD,
+          price: { amount: 75, type: "fixed" }
+        },
         supabase: ctx.supabase as any
       });
 
@@ -558,9 +559,10 @@ const tests: TestCase[] = [
           accessToken: "token-seller-a",
           userId: "seller-a",
           marketKey: ctx.marketKey,
-          payload: VALID_AUTOMOTIVE_PAYLOAD,
-          priceAmount: 80,
-          priceType: "fixed",
+          payload: {
+            ...VALID_AUTOMOTIVE_PAYLOAD,
+            price: { amount: 80, type: "fixed" }
+          },
           supabase: ctx.supabase as any
         });
       } catch (error) {
@@ -580,8 +582,6 @@ const tests: TestCase[] = [
         userId: "seller-home",
         marketKey: "home_services",
         payload: VALID_HOME_SERVICES_PAYLOAD,
-        priceAmount: 55,
-        priceType: "fixed",
         supabase: ctx.supabase as any
       });
 
@@ -609,8 +609,6 @@ const tests: TestCase[] = [
           userId: "seller-home",
           marketKey: "home_services",
           payload: VALID_HOME_SERVICES_PAYLOAD,
-          priceAmount: 60,
-          priceType: "fixed",
           supabase: ctx.supabase as any
         });
       } catch (error) {
@@ -660,9 +658,10 @@ const tests: TestCase[] = [
         accessToken: "token-seller-a",
         userId: "seller-a",
         marketKey: ctx.marketKey,
-        payload: VALID_AUTOMOTIVE_PAYLOAD,
-        priceAmount: 120,
-        priceType: "fixed",
+        payload: {
+          ...VALID_AUTOMOTIVE_PAYLOAD,
+          price: { amount: 120, type: "fixed" }
+        },
         supabase: ctx.supabase as any
       });
 
@@ -782,9 +781,10 @@ const tests: TestCase[] = [
         accessToken: "token-seller-a",
         userId: "seller-a",
         marketKey: "automotive",
-        payload: VALID_AUTOMOTIVE_PAYLOAD,
-        priceAmount: 100,
-        priceType: "fixed",
+        payload: {
+          ...VALID_AUTOMOTIVE_PAYLOAD,
+          price: { amount: 100, type: "fixed" }
+        },
         supabase: ctx.supabase as any
       });
       assert.equal(listingContract.ok, true);

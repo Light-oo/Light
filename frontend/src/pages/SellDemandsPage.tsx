@@ -36,6 +36,10 @@ type MarketDefinitionResponse = {
       label?: string;
       label_es?: string;
       required?: boolean;
+      requiredInBuy?: boolean;
+      required_in_buy?: boolean;
+      requiredInSell?: boolean;
+      required_in_sell?: boolean;
       order?: number;
       sortOrder?: number;
       type?: string | null;
@@ -616,7 +620,7 @@ export function SellDemandsPage() {
             );
           }) : null}
 
-          <button type="submit" disabled={!marketKey || loading}>
+          <button type="submit" className="primary-action-button" disabled={!marketKey || loading}>
             {loading ? "Buscando..." : "Ver Búsquedas"}
           </button>
         </form>

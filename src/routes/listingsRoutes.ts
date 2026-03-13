@@ -20,8 +20,8 @@ const createListingSchema = z.object({
   marketKey: z.string().trim().min(1),
   price: z
     .object({
-      amount: z.number().finite().gt(0).lte(10000),
-      type: z.literal("fixed")
+      amount: z.unknown().optional(),
+      type: z.unknown().optional()
     })
     .strict()
     .optional(),
@@ -108,22 +108,6 @@ router.post("/listings", requireAuth, async (req, res, next) => {
   }
 
   const marketKey = parsed.marketKey.trim().toLowerCase();
-  const requiresPrice = marketKey === "automotive";
-  if (requiresPrice && !parsed.price) {
-    return res.status(400).json({
-      ok: false,
-      error: "invalid_request",
-      message: "Payload validation failed.",
-      marketKey,
-      issues: [
-        {
-          path: "price",
-          code: "required_field_missing",
-          message: "Field \"price\" is required for this market."
-        }
-      ]
-    });
-  }
 
   try {
     const result = await createMarketAwareSellListing({
@@ -131,8 +115,6 @@ router.post("/listings", requireAuth, async (req, res, next) => {
       userId,
       marketKey,
       payload: req.body as Record<string, unknown>,
-      priceAmount: parsed.price?.amount,
-      priceType: parsed.price?.type,
       location: parsed.location
     });
 

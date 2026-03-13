@@ -4,6 +4,8 @@ export type MarketFieldDefinition = {
   key: string;
   label: string;
   required: boolean;
+  requiredInBuy: boolean;
+  requiredInSell: boolean;
   sortOrder: number;
   type: string | null;
   inputType: string;
@@ -31,6 +33,10 @@ type RawField = {
   label?: unknown;
   label_es?: unknown;
   required?: unknown;
+  requiredInBuy?: unknown;
+  required_in_buy?: unknown;
+  requiredInSell?: unknown;
+  required_in_sell?: unknown;
   order?: unknown;
   sortOrder?: unknown;
   type?: unknown;
@@ -162,10 +168,21 @@ export function normalizeMarketFields(rawFields: RawField[]): MarketFieldDefinit
         inputType = "text";
       }
       const resolvedSortOrder = toNumber(row.sortOrder ?? row.order, Number.MAX_SAFE_INTEGER - index);
+      const requiredFallback = toBoolean(row.required, false);
+      const requiredInBuy = toBoolean(
+        row.requiredInBuy ?? row.required_in_buy,
+        requiredFallback
+      );
+      const requiredInSell = toBoolean(
+        row.requiredInSell ?? row.required_in_sell,
+        requiredFallback
+      );
       return {
         key,
         label,
-        required: toBoolean(row.required, false),
+        required: requiredInBuy || requiredInSell,
+        requiredInBuy,
+        requiredInSell,
         sortOrder: resolvedSortOrder,
         type,
         inputType,
@@ -205,6 +222,13 @@ export function isFieldVisibleInFlow(field: MarketFieldDefinition, flow: MarketF
     return field.allowedInBuy;
   }
   return field.allowedInSell;
+}
+
+export function isFieldRequiredInFlow(field: MarketFieldDefinition, flow: MarketFlow) {
+  if (flow === "BUY") {
+    return field.requiredInBuy;
+  }
+  return field.requiredInSell;
 }
 
 export function resolveOrderedFlowFields(

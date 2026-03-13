@@ -77,6 +77,131 @@ function getFieldRuleMap(resolved: ResolvedMarket, fieldKey: string) {
   return map;
 }
 
+function normalizeFlowScope(value: unknown): "BUY" | "SELL" | "ALL" | null {
+  const normalized = toStringOrNull(value)?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "buy") {
+    return "BUY";
+  }
+  if (normalized === "sell") {
+    return "SELL";
+  }
+  if (["all", "both", "any", "*"].includes(normalized)) {
+    return "ALL";
+  }
+  return null;
+}
+
+function ruleAppliesToFlow(rule: ResolvedMarket["rules"][number], flow: "BUY" | "SELL") {
+  const rawScope =
+    (rule.raw as RawRecord | undefined)?.flow_scope ??
+    (rule.raw as RawRecord | undefined)?.flowScope ??
+    (rule.raw as RawRecord | undefined)?.scope;
+  const scope = normalizeFlowScope(rawScope);
+  if (!scope || scope === "ALL") {
+    return true;
+  }
+  return scope === flow;
+}
+
+function readRuleBoolean(value: unknown, fallback = false): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const row = value as RawRecord;
+    if (row.value !== undefined) {
+      return toBoolean(row.value, fallback);
+    }
+    if (row.enabled !== undefined) {
+      return toBoolean(row.enabled, fallback);
+    }
+    if (row.allow !== undefined) {
+      return toBoolean(row.allow, fallback);
+    }
+  }
+
+  return toBoolean(value, fallback);
+}
+
+function readRuleText(value: unknown) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const row = value as RawRecord;
+    if (row.value !== undefined) {
+      return toStringOrNull(row.value)?.toLowerCase() ?? null;
+    }
+  }
+
+  return toStringOrNull(value)?.toLowerCase() ?? null;
+}
+
+function isRequiredForFlow(
+  explicitRequiredValue: unknown,
+  requiredOnValue: unknown,
+  flow: "BUY" | "SELL",
+  fallback: boolean
+) {
+  const explicitRequired = readRuleBoolean(explicitRequiredValue, fallback);
+  const requiredOn = readRuleText(requiredOnValue);
+  if (!requiredOn) {
+    return explicitRequired;
+  }
+
+  if (["none", "never", "false", "0"].includes(requiredOn)) {
+    return false;
+  }
+  if (["both", "all", "any", "true", "1"].includes(requiredOn)) {
+    return true;
+  }
+  if (requiredOn === "buy") {
+    return flow === "BUY";
+  }
+  if (requiredOn === "sell") {
+    return flow === "SELL";
+  }
+
+  return explicitRequired;
+}
+
+function resolveRequiredForFlow(
+  resolved: ResolvedMarket,
+  fieldKey: string,
+  fallbackRequired: boolean,
+  flow: "BUY" | "SELL",
+  ruleMap: Map<string, unknown>
+) {
+  const normalizedFieldKey = fieldKey.trim().toLowerCase();
+  const requiredRules = resolved.rules.filter(
+    (rule) =>
+      (rule.fieldKey ?? "").toLowerCase() === normalizedFieldKey &&
+      rule.ruleKey.toLowerCase() === "required"
+  );
+  const matchingRequiredRules = requiredRules.filter((rule) => ruleAppliesToFlow(rule, flow));
+
+  if (matchingRequiredRules.length > 0) {
+    const selectedRule = matchingRequiredRules[matchingRequiredRules.length - 1];
+    return toBoolean(selectedRule.ruleValue, false);
+  }
+
+  if (requiredRules.length > 0) {
+    return false;
+  }
+
+  return isRequiredForFlow(
+    ruleMap.get("required"),
+    ruleMap.get("required_on"),
+    flow,
+    fallbackRequired
+  );
+}
+
 function inferInputType(fieldKey: string, rawType: string | null) {
   const normalizedKey = fieldKey.trim().toLowerCase();
   if (["detail", "details", "details_text", "detalle"].includes(normalizedKey)) {
@@ -195,13 +320,31 @@ export async function getMarketDefinition(params: {
         ruleMap.get("allowed_in_sell") ?? field.raw.allowed_in_sell ?? field.raw.allowedInSell,
         true
       );
+      const requiredInBuy = resolveRequiredForFlow(
+        resolved,
+        field.key,
+        field.required,
+        "BUY",
+        ruleMap
+      );
+      const requiredInSell = resolveRequiredForFlow(
+        resolved,
+        field.key,
+        field.required,
+        "SELL",
+        ruleMap
+      );
 
       return {
         id: field.id,
         key: field.key,
         label: field.label,
         type: field.type,
-        required: field.required,
+        required: requiredInBuy || requiredInSell,
+        requiredInBuy,
+        required_in_buy: requiredInBuy,
+        requiredInSell,
+        required_in_sell: requiredInSell,
         order: field.order,
         inputType,
         input_type: inputType,
@@ -228,6 +371,10 @@ export type MarketDefinitionContractData = {
     label: string;
     type: string | null;
     required: boolean;
+    requiredInBuy: boolean;
+    required_in_buy: boolean;
+    requiredInSell: boolean;
+    required_in_sell: boolean;
     order: number;
     inputType: string | null;
     input_type: string | null;

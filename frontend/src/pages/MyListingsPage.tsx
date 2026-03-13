@@ -1,25 +1,55 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { useMarket } from "../context/MarketContext";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
-import {
-  buildGenericCardContent,
-  extractIdentityValuesForFields,
-  parseSignatureIdentityValues
-} from "../lib/listingDisplay";
+import { buildGenericCardContent, parseSignatureIdentityValues } from "../lib/listingDisplay";
 import {
   normalizeMarketFields,
   resolveOrderedFlowFields,
   type MarketFieldDefinition
 } from "../lib/marketForm";
-import {
-  fetchMyDemands,
-  fetchMyListings,
-  setMyDemandInactive,
-  type MyDemandRow,
-  type MyListingRow
-} from "../lib/supabaseData";
+
+type IdentityValueMap = Record<string, string>;
+
+type MyListingRow = {
+  id: string;
+  marketKey: string;
+  identityValues: IdentityValueMap;
+  signature: string;
+  status: "active" | "inactive" | string;
+  created_at: string | null;
+  price?: {
+    amount: number | null;
+    type: string | null;
+    currency: string | null;
+  } | null;
+  location?: {
+    department: string | null;
+    municipality: string | null;
+  } | null;
+};
+
+type MyDemandRow = {
+  id: string;
+  marketKey: string;
+  identityValues: IdentityValueMap;
+  signature: string;
+  status: "open" | "inactive" | "closed" | "cancelled" | string;
+  created_at: string | null;
+  request?: {
+    detailsText: string | null;
+  } | null;
+};
+
+type MyListingsResponse = {
+  ok: true;
+  data: MyListingRow[];
+};
+
+type MyDemandsResponse = {
+  ok: true;
+  data: MyDemandRow[];
+};
 
 type MarketDefinitionResponse = {
   ok: true;
@@ -29,6 +59,10 @@ type MarketDefinitionResponse = {
       label?: string;
       label_es?: string;
       required?: boolean;
+      requiredInBuy?: boolean;
+      required_in_buy?: boolean;
+      requiredInSell?: boolean;
+      required_in_sell?: boolean;
       order?: number;
       sortOrder?: number;
       type?: string | null;
@@ -42,16 +76,27 @@ type MarketDefinitionResponse = {
   };
 };
 
-function inferDisplayFieldsFromIdentity(identityValues: Record<string, string>) {
-  return normalizeMarketFields(
-    Object.keys(identityValues).map((key, index) => ({
-      key,
-      label: key,
-      order: index + 1,
-      allowedInBuy: true,
-      allowedInSell: true
-    }))
-  );
+type MarketFieldsByKey = Record<
+  string,
+  {
+    buy: MarketFieldDefinition[];
+    sell: MarketFieldDefinition[];
+  }
+>;
+
+function inferDisplayFieldsFromIdentity(identityValues: IdentityValueMap): MarketFieldDefinition[] {
+  return Object.keys(identityValues).map((key, index) => ({
+    key,
+    label: key,
+    required: false,
+    requiredInBuy: false,
+    requiredInSell: false,
+    sortOrder: index + 1,
+    type: null,
+    inputType: "select",
+    allowedInBuy: true,
+    allowedInSell: true
+  }));
 }
 
 function numericValue(value: unknown): number | null {
@@ -70,33 +115,20 @@ function numericValue(value: unknown): number | null {
 }
 
 function resolveListingPrice(row: MyListingRow) {
-  const pricing = row.pricing;
-  const rootRow = row as unknown as Record<string, unknown>;
-  const amountCandidates: unknown[] = [
-    Array.isArray(pricing) ? pricing[0]?.price_amount : pricing?.price_amount,
-    row.price_amount,
-    row.listing_price,
-    row.price,
-    rootRow.price_amount,
-    rootRow.listing_price,
-    rootRow.price
-  ];
-
-  const amount = amountCandidates
-    .map((candidate) => numericValue(candidate))
-    .find((candidate) => candidate !== null);
-
-  if (amount === undefined || amount === null) {
-    return "—";
+  const amount = numericValue(row.price?.amount);
+  if (amount === null) {
+    return null;
   }
 
-  const numericAmount = amount;
-  const formattedAmount =
-    Number.isInteger(numericAmount) ? String(numericAmount) : numericAmount.toFixed(2);
+  const formattedAmount = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
   return `$${formattedAmount}`;
 }
 
-function formatWhen(value: string) {
+function formatWhen(value: string | null) {
+  if (!value) {
+    return "-";
+  }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "-";
@@ -120,10 +152,33 @@ function formatWhen(value: string) {
   return date.toLocaleString();
 }
 
+function uniqueMarketKeys(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => value.trim().toLowerCase()).filter((value) => value.length > 0))
+  );
+}
+
+function resolveRowDisplayFields(params: {
+  marketKey: string;
+  mode: "BUY" | "SELL";
+  identityValues: IdentityValueMap;
+  marketFieldsByKey: MarketFieldsByKey;
+}) {
+  const flowFields =
+    params.mode === "BUY"
+      ? params.marketFieldsByKey[params.marketKey]?.buy ?? []
+      : params.marketFieldsByKey[params.marketKey]?.sell ?? [];
+
+  const visibleFieldKeys = new Set(Object.keys(params.identityValues));
+  const orderedFields = flowFields.filter((field) => visibleFieldKeys.has(field.key));
+
+  return orderedFields.length > 0 ? orderedFields : inferDisplayFieldsFromIdentity(params.identityValues);
+}
+
 function ListingGroup({
   title,
   rows,
-  orderedFields,
+  marketFieldsByKey,
   mode,
   expanded,
   onToggle,
@@ -133,7 +188,7 @@ function ListingGroup({
 }: {
   title: string;
   rows: MyListingRow[];
-  orderedFields: MarketFieldDefinition[];
+  marketFieldsByKey: MarketFieldsByKey;
   mode: "active" | "inactive";
   expanded: boolean;
   onToggle: () => void;
@@ -145,48 +200,48 @@ function ListingGroup({
     <section className="stack">
       <button type="button" className="ghost section-toggle" onClick={onToggle} aria-expanded={expanded}>
         <span className="section-title">{title}</span>
-        <span aria-hidden="true">{expanded ? "−" : "+"}</span>
+        <span aria-hidden="true">{expanded ? "-" : "+"}</span>
       </button>
-      {expanded ? rows.map((row) => {
-        const specs = row.item_specs;
-        const signatureIdentity = parseSignatureIdentityValues((row as any).intention_signature);
-        const displayFields =
-          orderedFields.length > 0 ? orderedFields : inferDisplayFieldsFromIdentity(signatureIdentity);
-        const identityValues = extractIdentityValuesForFields({
-          part_label_es: row.part_label_es ?? specs?.part_label_es,
-          brand_label_es: row.brand_label_es ?? specs?.brand_label_es,
-          model_label_es: row.model_label_es ?? specs?.model_label_es,
-          item_type_label_es: (row as any).item_type_label_es ?? (specs as any)?.item_type_label_es,
-          year: row.year ?? specs?.year,
-          identity: signatureIdentity
-        }, displayFields);
-        const cardContent = buildGenericCardContent({
-          intentLabel: "Vendo",
-          orderedFields: displayFields,
-          values: identityValues,
-          fallbackLabel: "Publicacion"
-        });
-        const price = resolveListingPrice(row);
-        return (
-          <article key={row.id} className="card stack listing-row">
-            <p>
-              <strong>{cardContent.title}</strong>
-            </p>
-            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
-            {price !== "—" ? <p>{`Precio: ${price}`}</p> : null}
-            <p>Creado: {formatWhen(row.created_at)}</p>
-            {mode === "active" ? (
-              <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
-                {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
-              </button>
-            ) : (
-              <button type="button" onClick={() => onSetActive(row)} disabled={Boolean(togglingById[row.id])}>
-                {togglingById[row.id] ? "Actualizando..." : "Reactivar"}
-              </button>
-            )}
-          </article>
-        );
-      }) : null}
+      {expanded
+        ? rows.map((row) => {
+            const signatureIdentity = parseSignatureIdentityValues(row.signature);
+            const identityValues =
+              Object.keys(row.identityValues ?? {}).length > 0 ? row.identityValues : signatureIdentity;
+            const displayFields = resolveRowDisplayFields({
+              marketKey: row.marketKey,
+              mode: "SELL",
+              identityValues,
+              marketFieldsByKey
+            });
+            const cardContent = buildGenericCardContent({
+              intentLabel: "Vendo",
+              orderedFields: displayFields,
+              values: identityValues,
+              fallbackLabel: "Publicacion"
+            });
+            const price = resolveListingPrice(row);
+
+            return (
+              <article key={row.id} className="card stack listing-row">
+                <p>
+                  <strong>{cardContent.title}</strong>
+                </p>
+                {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+                {price ? <p>{`Precio: ${price}`}</p> : null}
+                <p>Creado: {formatWhen(row.created_at)}</p>
+                {mode === "active" ? (
+                  <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
+                    {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => onSetActive(row)} disabled={Boolean(togglingById[row.id])}>
+                    {togglingById[row.id] ? "Actualizando..." : "Reactivar"}
+                  </button>
+                )}
+              </article>
+            );
+          })
+        : null}
     </section>
   );
 }
@@ -194,7 +249,7 @@ function ListingGroup({
 function DemandGroup({
   title,
   rows,
-  orderedFields,
+  marketFieldsByKey,
   expanded,
   onToggle,
   onSetInactive,
@@ -202,7 +257,7 @@ function DemandGroup({
 }: {
   title: string;
   rows: MyDemandRow[];
-  orderedFields: MarketFieldDefinition[];
+  marketFieldsByKey: MarketFieldsByKey;
   expanded: boolean;
   onToggle: () => void;
   onSetInactive: (row: MyDemandRow) => void;
@@ -212,51 +267,52 @@ function DemandGroup({
     <section className="stack">
       <button type="button" className="ghost section-toggle" onClick={onToggle} aria-expanded={expanded}>
         <span className="section-title">{title}</span>
-        <span aria-hidden="true">{expanded ? "−" : "+"}</span>
+        <span aria-hidden="true">{expanded ? "-" : "+"}</span>
       </button>
-      {expanded ? rows.map((row) => {
-        const signatureIdentity = parseSignatureIdentityValues((row as any).intention_signature);
-        const displayFields =
-          orderedFields.length > 0 ? orderedFields : inferDisplayFieldsFromIdentity(signatureIdentity);
-        const identityValues = extractIdentityValuesForFields({
-          part_label_es: row.part_label_es,
-          brand_label_es: row.brand_label_es,
-          model_label_es: row.model_label_es,
-          year: row.year,
-          identity: signatureIdentity
-        }, displayFields);
-        const cardContent = buildGenericCardContent({
-          intentLabel: "Busco",
-          orderedFields: displayFields,
-          values: identityValues,
-          fallbackLabel: "Publicacion"
-        });
-        const isActive = row.status === "open";
-        return (
-          <article key={row.id} className="card stack listing-row">
-            <p>
-              <strong>{cardContent.title}</strong>
-            </p>
-            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
-            <p>Creado: {formatWhen(row.created_at)}</p>
-            {isActive ? (
-              <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
-                {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
-              </button>
-            ) : null}
-          </article>
-        );
-      }) : null}
+      {expanded
+        ? rows.map((row) => {
+            const signatureIdentity = parseSignatureIdentityValues(row.signature);
+            const identityValues =
+              Object.keys(row.identityValues ?? {}).length > 0 ? row.identityValues : signatureIdentity;
+            const displayFields = resolveRowDisplayFields({
+              marketKey: row.marketKey,
+              mode: "BUY",
+              identityValues,
+              marketFieldsByKey
+            });
+            const cardContent = buildGenericCardContent({
+              intentLabel: "Busco",
+              orderedFields: displayFields,
+              values: identityValues,
+              fallbackLabel: "Publicacion"
+            });
+            const isActive = row.status === "open";
+
+            return (
+              <article key={row.id} className="card stack listing-row">
+                <p>
+                  <strong>{cardContent.title}</strong>
+                </p>
+                {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+                <p>Creado: {formatWhen(row.created_at)}</p>
+                {isActive ? (
+                  <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
+                    {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
+                  </button>
+                ) : null}
+              </article>
+            );
+          })
+        : null}
     </section>
   );
 }
 
 export function MyListingsPage() {
-  const { api, token, userId } = useAuth();
-  const { marketKey } = useMarket();
+  const { api, token } = useAuth();
   const [rows, setRows] = useState<MyListingRow[]>([]);
   const [demands, setDemands] = useState<MyDemandRow[]>([]);
-  const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
+  const [marketFieldsByKey, setMarketFieldsByKey] = useState<MarketFieldsByKey>({});
   const [expandedSections, setExpandedSections] = useState({
     activeDemands: false,
     activeListings: false,
@@ -266,40 +322,82 @@ export function MyListingsPage() {
   const [togglingById, setTogglingById] = useState<Record<string, boolean>>({});
   const [togglingDemandById, setTogglingDemandById] = useState<Record<string, boolean>>({});
 
-  async function load() {
-    if (!token || !userId) {
+  useEffect(() => {
+    if (!token) {
       return;
     }
+
     setError(null);
-    try {
-      const [listings, demandRows] = await Promise.all([
-        fetchMyListings(token, userId),
-        fetchMyDemands(token, userId)
-      ]);
-      setRows(listings);
-      setDemands(demandRows);
-    } catch (err) {
-      setError(toUiErrorMessage(err));
-    }
-  }
+    Promise.all([
+      api.get<MyListingsResponse>("/api/me/listings"),
+      api.get<MyDemandsResponse>("/api/me/buy-demands")
+    ])
+      .then(([listings, demandRows]) => {
+        setRows(Array.isArray(listings.data) ? listings.data : []);
+        setDemands(Array.isArray(demandRows.data) ? demandRows.data : []);
+      })
+      .catch((err) => {
+        setError(toUiErrorMessage(err));
+      });
+  }, [api, token]);
+
+  const loadedMarketKeys = useMemo(
+    () => uniqueMarketKeys([...rows.map((row) => row.marketKey), ...demands.map((row) => row.marketKey)]),
+    [demands, rows]
+  );
 
   useEffect(() => {
-    load();
-  }, [token, userId]);
-
-  useEffect(() => {
-    if (!token || !marketKey) {
-      setMarketFields([]);
+    if (!token || loadedMarketKeys.length === 0) {
+      setMarketFieldsByKey({});
       return;
     }
 
-    api
-      .get<MarketDefinitionResponse>(`/catalog/markets/${encodeURIComponent(marketKey)}`)
-      .then((response) => {
-        setMarketFields(normalizeMarketFields(response.data.fields));
+    let cancelled = false;
+
+    Promise.allSettled(
+      loadedMarketKeys.map(async (marketKey) => {
+        const response = await api.get<MarketDefinitionResponse>(
+          `/catalog/markets/${encodeURIComponent(marketKey)}`
+        );
+        const normalizedFields = normalizeMarketFields(response.data.fields);
+        return [
+          marketKey,
+          {
+            buy: resolveOrderedFlowFields(normalizedFields, "BUY"),
+            sell: resolveOrderedFlowFields(normalizedFields, "SELL")
+          }
+        ] as const;
       })
-      .catch((err) => setError(toUiErrorMessage(err)));
-  }, [api, marketKey, token]);
+    ).then((results) => {
+      if (cancelled) {
+        return;
+      }
+
+      const nextMarketFieldsByKey: MarketFieldsByKey = {};
+      let firstError: unknown = null;
+
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          const [marketKey, definitions] = result.value;
+          nextMarketFieldsByKey[marketKey] = definitions;
+          continue;
+        }
+
+        if (!firstError) {
+          firstError = result.reason;
+        }
+      }
+
+      setMarketFieldsByKey(nextMarketFieldsByKey);
+      if (firstError) {
+        setError(toUiErrorMessage(firstError));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, loadedMarketKeys, token]);
 
   async function updateListingStatus(row: MyListingRow, nextStatus: "active" | "inactive") {
     if (togglingById[row.id] || row.status === nextStatus) {
@@ -341,7 +439,7 @@ export function MyListingsPage() {
   }
 
   async function setDemandInactive(row: MyDemandRow) {
-    if (!token || !userId || togglingDemandById[row.id]) {
+    if (!token || togglingDemandById[row.id]) {
       return;
     }
 
@@ -353,11 +451,12 @@ export function MyListingsPage() {
     setTogglingDemandById((current) => ({ ...current, [row.id]: true }));
 
     try {
-      const updated = await setMyDemandInactive(token, userId, row.id);
-      if (!updated) {
-        setError("No se encontró la búsqueda.");
-        return;
-      }
+      await api.patch<{ ok: true; data: { id: string; status: string } }>(
+        `/api/me/buy-demands/${row.id}/status`,
+        {
+          status: "inactive"
+        }
+      );
       setDemands((current) => current.map((item) => (item.id === row.id ? { ...item, status: "inactive" } : item)));
     } catch (err) {
       setError(toUiErrorMessage(err));
@@ -369,14 +468,6 @@ export function MyListingsPage() {
   const activeRows = useMemo(() => rows.filter((row) => row.status === "active"), [rows]);
   const inactiveRows = useMemo(() => rows.filter((row) => row.status !== "active"), [rows]);
   const activeDemands = useMemo(() => demands.filter((row) => row.status === "open"), [demands]);
-  const listingDisplayFields = useMemo(
-    () => resolveOrderedFlowFields(marketFields, "SELL"),
-    [marketFields]
-  );
-  const demandDisplayFields = useMemo(
-    () => resolveOrderedFlowFields(marketFields, "BUY"),
-    [marketFields]
-  );
 
   function toggleSection(section: keyof typeof expandedSections) {
     setExpandedSections((current) => ({
@@ -392,7 +483,7 @@ export function MyListingsPage() {
       <DemandGroup
         title={`Búsquedas Activas (${activeDemands.length})`}
         rows={activeDemands}
-        orderedFields={demandDisplayFields}
+        marketFieldsByKey={marketFieldsByKey}
         expanded={expandedSections.activeDemands}
         onToggle={() => toggleSection("activeDemands")}
         onSetInactive={setDemandInactive}
@@ -402,7 +493,7 @@ export function MyListingsPage() {
       <ListingGroup
         title={`Ventas Activas (${activeRows.length})`}
         rows={activeRows}
-        orderedFields={listingDisplayFields}
+        marketFieldsByKey={marketFieldsByKey}
         mode="active"
         expanded={expandedSections.activeListings}
         onToggle={() => toggleSection("activeListings")}
@@ -414,7 +505,7 @@ export function MyListingsPage() {
       <ListingGroup
         title={`Ventas Inactivas (${inactiveRows.length})`}
         rows={inactiveRows}
-        orderedFields={listingDisplayFields}
+        marketFieldsByKey={marketFieldsByKey}
         mode="inactive"
         expanded={expandedSections.inactiveListings}
         onToggle={() => toggleSection("inactiveListings")}

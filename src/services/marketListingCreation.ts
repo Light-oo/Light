@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { createSupabaseAnon } from "../lib/supabase";
 import type { ResolvedMarket, ResolvedMarketField, ResolvedMarketRule } from "./marketResolution";
 import { resolveMarketConfiguration } from "./marketResolution";
-import { validateMarketPayload } from "./dynamicValidation";
+import { isMarketFieldRequiredForFlow, validateMarketPayload } from "./dynamicValidation";
 import { buildIntentionSignature } from "./signatureBuilder";
 import { loadFieldVocabulary } from "./marketVocabulary";
 import { engineOk, type EngineContractResponse } from "./engineContracts";
@@ -15,8 +15,6 @@ type CreateMarketAwareSellListingInput = {
   userId: string;
   marketKey: string;
   payload: Record<string, unknown>;
-  priceAmount?: number;
-  priceType?: "fixed";
   location?: {
     department: string;
     municipality: string;
@@ -69,6 +67,21 @@ function toBoolean(value: unknown, defaultValue = false): boolean {
     }
   }
   return defaultValue;
+}
+
+function toFiniteNumberOrNull(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function isMissingColumnError(error: any) {
@@ -318,6 +331,101 @@ function mapIncomingPayloadToMarketFields(
     }
   }
   return mapped;
+}
+
+function getFieldByKey(resolvedMarket: ResolvedMarket, fieldKey: string) {
+  return resolvedMarket.fields.find(
+    (field) => field.key.toLowerCase() === fieldKey.trim().toLowerCase()
+  ) ?? null;
+}
+
+function normalizePricePayload(params: {
+  payload: Record<string, unknown>;
+  resolvedMarket: ResolvedMarket;
+}) {
+  const priceField = getFieldByKey(params.resolvedMarket, "price");
+  if (!priceField) {
+    return {
+      normalizedPriceValue: null as number | null,
+      priceType: null as "fixed" | null,
+      issues: [] as Array<{ path: string; message: string; code: string }>
+    };
+  }
+
+  const rawPrice = params.payload.price;
+  if (rawPrice === undefined || rawPrice === null || rawPrice === "") {
+    return {
+      normalizedPriceValue: null as number | null,
+      priceType: null as "fixed" | null,
+      issues: [] as Array<{ path: string; message: string; code: string }>
+    };
+  }
+
+  if (!rawPrice || typeof rawPrice !== "object" || Array.isArray(rawPrice)) {
+    return {
+      normalizedPriceValue: null as number | null,
+      priceType: null as "fixed" | null,
+      issues: [
+        {
+          path: "price",
+          code: "invalid_field_value",
+          message: "Field \"price\" must be an object with amount and type."
+        }
+      ]
+    };
+  }
+
+  const priceRow = rawPrice as Record<string, unknown>;
+  const amount = toFiniteNumberOrNull(priceRow.amount);
+  const rawType = toStringOrNull(priceRow.type)?.trim().toLowerCase() ?? null;
+
+  if (priceRow.amount !== undefined && amount === null) {
+    return {
+      normalizedPriceValue: null as number | null,
+      priceType: null as "fixed" | null,
+      issues: [
+        {
+          path: "price.amount",
+          code: "invalid_field_value",
+          message: "Field \"price.amount\" must be numeric."
+        }
+      ]
+    };
+  }
+
+  if (amount !== null && (amount <= 0 || amount > 10000)) {
+    return {
+      normalizedPriceValue: null as number | null,
+      priceType: null as "fixed" | null,
+      issues: [
+        {
+          path: "price.amount",
+          code: "invalid_field_value",
+          message: "Field \"price.amount\" must be greater than 0 and less than or equal to 10000."
+        }
+      ]
+    };
+  }
+
+  if (rawType !== null && rawType !== "fixed") {
+    return {
+      normalizedPriceValue: null as number | null,
+      priceType: null as "fixed" | null,
+      issues: [
+        {
+          path: "price.type",
+          code: "invalid_field_value",
+          message: "Field \"price.type\" must be \"fixed\"."
+        }
+      ]
+    };
+  }
+
+  return {
+    normalizedPriceValue: amount,
+    priceType: amount === null ? null : "fixed",
+    issues: [] as Array<{ path: string; message: string; code: string }>
+  };
 }
 
 function buildLegacyUuidIssues(
@@ -621,6 +729,39 @@ export async function createMarketAwareSellListing(input: CreateMarketAwareSellL
   const resolvedMarket = await resolveMarketConfiguration(marketKey, {
     supabase: supabase as any
   });
+  const priceNormalization = normalizePricePayload({
+    payload: input.payload,
+    resolvedMarket
+  });
+  if (priceNormalization.issues.length > 0) {
+    throw new MarketListingCreationError(
+      "invalid_request",
+      "invalid_request",
+      400,
+      priceNormalization.issues
+    );
+  }
+  const hasPrice =
+    typeof priceNormalization.normalizedPriceValue === "number" &&
+    Number.isFinite(priceNormalization.normalizedPriceValue) &&
+    priceNormalization.priceType === "fixed";
+  const priceRequired = await isMarketFieldRequiredForFlow({
+    marketKey: resolvedMarket.market.key,
+    fieldKey: "price",
+    flow: "SELL",
+    resolvedMarket,
+    supabase: supabase as any
+  });
+
+  if (priceRequired && !hasPrice) {
+    throw new MarketListingCreationError("invalid_request", "invalid_request", 400, [
+      {
+        path: "price",
+        code: "required_field_missing",
+        message: "Field \"price\" is required."
+      }
+    ]);
+  }
 
   const nonCanonicalIssues = collectNonCanonicalFieldKeyIssues(input.payload, resolvedMarket);
   if (nonCanonicalIssues.length > 0) {
@@ -640,6 +781,11 @@ export async function createMarketAwareSellListing(input: CreateMarketAwareSellL
     resolvedMarket,
     payload: mappedPayload
   });
+  if (hasPrice) {
+    mappedPayload.price = priceNormalization.normalizedPriceValue;
+  } else {
+    delete mappedPayload.price;
+  }
   const legacyUuidIssues = buildLegacyUuidIssues(mappedPayload, resolvedMarket);
   if (legacyUuidIssues.length > 0) {
     throw new MarketListingCreationError(
@@ -737,16 +883,11 @@ export async function createMarketAwareSellListing(input: CreateMarketAwareSellL
       throw new MarketListingCreationError("insert_item_specs_failed", specsError.message, 500);
     }
 
-    const hasPrice =
-      typeof input.priceAmount === "number" &&
-      Number.isFinite(input.priceAmount) &&
-      input.priceType === "fixed";
-
     if (hasPrice) {
       const { error: pricingError } = await supabase.from("pricing").insert({
         listing_id: listingId,
-        price_amount: input.priceAmount,
-        price_type: input.priceType,
+        price_amount: priceNormalization.normalizedPriceValue,
+        price_type: priceNormalization.priceType,
         currency: "USD"
       });
 

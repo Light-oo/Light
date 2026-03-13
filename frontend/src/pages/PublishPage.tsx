@@ -18,6 +18,7 @@ import {
   buildDependencyMaps,
   dependencyQueryForField,
   hasDependencyParentsSelected,
+  isFieldRequiredInFlow,
   normalizeMarketDependencies,
   normalizeMarketFields,
   resetDependentValues,
@@ -54,6 +55,10 @@ type MarketDefinitionResponse = {
       label?: string;
       label_es?: string;
       required?: boolean;
+      requiredInBuy?: boolean;
+      required_in_buy?: boolean;
+      requiredInSell?: boolean;
+      required_in_sell?: boolean;
       order?: number;
       sortOrder?: number;
       type?: string | null;
@@ -224,11 +229,15 @@ export function PublishPage() {
     [availableMarkets]
   );
   const normalizedMarketKey = (marketKey ?? "").trim().toLowerCase();
-  const requiresPrice = normalizedMarketKey === "automotive";
   const publishFormFields = useMemo(
     () => sellFields.filter((field) => !isPriceMetadataField(field.key)),
     [sellFields]
   );
+  const priceMetadataField = useMemo(
+    () => sellFields.find((field) => isPriceMetadataField(field.key)) ?? null,
+    [sellFields]
+  );
+  const requiresPrice = priceMetadataField ? isFieldRequiredInFlow(priceMetadataField, "SELL") : false;
   const dependencyMaps = useMemo(
     () => buildDependencyMaps(marketDependencies),
     [marketDependencies]
@@ -259,7 +268,7 @@ export function PublishPage() {
   const requiredPublishFieldsComplete = useMemo(
     () =>
       publishFormFields
-        .filter((field) => field.required)
+        .filter((field) => isFieldRequiredInFlow(field, "SELL"))
         .every((field) => {
           const value = structuredValues[field.key];
           return typeof value === "string" && value.trim().length > 0;
@@ -764,7 +773,7 @@ export function PublishPage() {
     }
 
     const missing = publishFormFields
-      .filter((field) => field.required)
+      .filter((field) => isFieldRequiredInFlow(field, "SELL"))
       .find((field) => !sanitizedValues[field.key]);
     if (missing) {
       setError(`Complete el campo requerido: ${getFieldLabel(missing)}.`);
@@ -845,7 +854,7 @@ export function PublishPage() {
     <div className="screen screen-fill stack gap-lg">
       <button
         type="button"
-        className="ghost"
+        className="primary-action-button"
         onClick={() => navigate("/sell-demands")}
       >
         Buscar Demandas
@@ -877,7 +886,7 @@ export function PublishPage() {
                   <input
                     type={inputType}
                     value={structuredValues[field.key] ?? ""}
-                    required={field.required}
+                    required={isFieldRequiredInFlow(field, "SELL")}
                     disabled={isFieldDisabled(field.key)}
                     onChange={(event) => updateStructuredField(field.key, event.target.value)}
                   />
@@ -889,7 +898,7 @@ export function PublishPage() {
               <FilterSelect
                 key={field.key}
                 label={getFieldLabel(field)}
-                required={field.required}
+                required={isFieldRequiredInFlow(field, "SELL")}
                 disabled={isFieldDisabled(field.key)}
                 value={structuredValues[field.key] ?? ""}
                 options={optionsForField(field.key)}
@@ -922,7 +931,7 @@ export function PublishPage() {
                   <input
                     type={inputType}
                     value={structuredValues[field.key] ?? ""}
-                    required={field.required}
+                    required={isFieldRequiredInFlow(field, "SELL")}
                     disabled={isFieldDisabled(field.key)}
                     onChange={(event) => updateStructuredField(field.key, event.target.value)}
                   />
@@ -934,7 +943,7 @@ export function PublishPage() {
               <FilterSelect
                 key={field.key}
                 label={getFieldLabel(field)}
-                required={field.required}
+                required={isFieldRequiredInFlow(field, "SELL")}
                 disabled={isFieldDisabled(field.key)}
                 value={structuredValues[field.key] ?? ""}
                 options={optionsForField(field.key)}
@@ -946,6 +955,7 @@ export function PublishPage() {
           {marketKey && requiredPublishFieldsComplete ? (
             <button
               type="submit"
+              className="primary-action-button"
               disabled={loading || !requiredPublishFieldsComplete || !validPriceReady}
             >
               {loading ? "Publicando..." : "Publicar"}

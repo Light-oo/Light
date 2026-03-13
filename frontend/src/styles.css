@@ -540,6 +540,12 @@ button.ghost {
   border-color: var(--line);
 }
 
+button.primary-action-button {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+}
+
 .pager {
   display: flex;
   align-items: center;

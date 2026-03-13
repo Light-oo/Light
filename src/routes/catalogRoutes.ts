@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
 import { createSupabaseAnon } from "../lib/supabase";
-import { resolveMarketConfiguration, type ResolvedMarket } from "../services/marketResolution";
 import {
   getAvailableMarketsContract,
   getMarketDefinitionContract,
@@ -13,32 +12,6 @@ import { mapEngineResponseToHttpStatus, toPublicEngineErrorPayload } from "../se
 
 const router = Router();
 
-const idOptionQuerySchema = z.object({
-  brandId: z.string().trim().min(1).optional(),
-  brand_id: z.string().trim().min(1).optional()
-}).strict().superRefine((value, ctx) => {
-  if (!value.brandId && !value.brand_id) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["brand_id"],
-      message: "Required"
-    });
-  }
-});
-
-const partsQuerySchema = z.object({
-  itemTypeId: z.string().trim().min(1).optional(),
-  item_type_id: z.string().trim().min(1).optional()
-}).strict().superRefine((value, ctx) => {
-  if (!value.itemTypeId && !value.item_type_id) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["item_type_id"],
-      message: "Required"
-    });
-  }
-});
-
 const marketKeyParamSchema = z.object({
   marketKey: z.string().trim().min(1)
 });
@@ -47,26 +20,6 @@ const marketFieldOptionsParamSchema = z.object({
   marketKey: z.string().trim().min(1),
   fieldKey: z.string().trim().min(1)
 });
-
-function pickFieldKey(resolvedMarket: ResolvedMarket, candidates: string[]) {
-  const keys = new Set(resolvedMarket.fields.map((field) => field.key.toLowerCase()));
-  for (const candidate of candidates) {
-    const normalized = candidate.trim().toLowerCase();
-    if (keys.has(normalized)) {
-      return normalized;
-    }
-  }
-  return null;
-}
-
-function mapOptionsForLegacyCatalogResponse(
-  options: Array<{ id: string | null; label: string }>
-) {
-  return options.map((option) => ({
-    id: option.id,
-    label_es: option.label
-  }));
-}
 
 function collectSelectedValues(query: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -194,178 +147,6 @@ router.get("/catalog/markets/:marketKey/vocabulary", requireAuth, async (req, re
   }
 
   return res.json(response);
-});
-
-router.get("/catalog/brands", requireAuth, async (req, res) => {
-  const authToken = (req as unknown as { authToken: string }).authToken;
-  const supabase = createSupabaseAnon({ accessToken: authToken });
-  const resolvedMarket = await resolveMarketConfiguration("automotive", { supabase: supabase as any });
-  const brandFieldKey = pickFieldKey(resolvedMarket, ["brand"]);
-  if (!brandFieldKey) {
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  const response = await getMarketFieldOptionsContract({
-    marketKey: "automotive",
-    fieldKey: brandFieldKey,
-    selectedValues: {},
-    supabase
-  });
-
-  if (!response.ok) {
-    return res.status(mapEngineResponseToHttpStatus(response)).json(toPublicEngineErrorPayload(response));
-  }
-
-  return res.json({
-    ok: true,
-    data: {
-      options: mapOptionsForLegacyCatalogResponse(response.data.options)
-    }
-  });
-});
-
-router.get("/catalog/models", requireAuth, async (req, res, next) => {
-  let parsedQuery: z.infer<typeof idOptionQuerySchema>;
-  try {
-    parsedQuery = idOptionQuerySchema.parse(req.query);
-  } catch (err) {
-    return next(err);
-  }
-
-  const brandId = parsedQuery.brand_id ?? parsedQuery.brandId!;
-  const authToken = (req as unknown as { authToken: string }).authToken;
-  const supabase = createSupabaseAnon({ accessToken: authToken });
-  const resolvedMarket = await resolveMarketConfiguration("automotive", { supabase: supabase as any });
-  const modelFieldKey = pickFieldKey(resolvedMarket, ["model"]);
-  const brandFieldKey = pickFieldKey(resolvedMarket, ["brand"]);
-  if (!modelFieldKey || !brandFieldKey) {
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  const response = await getMarketFieldOptionsContract({
-    marketKey: "automotive",
-    fieldKey: modelFieldKey,
-    selectedValues: {
-      [brandFieldKey]: brandId
-    },
-    supabase
-  });
-
-  if (!response.ok) {
-    return res.status(mapEngineResponseToHttpStatus(response)).json(toPublicEngineErrorPayload(response));
-  }
-
-  return res.json({
-    ok: true,
-    data: {
-      brand_id: brandId,
-      options: mapOptionsForLegacyCatalogResponse(response.data.options)
-    }
-  });
-});
-
-router.get("/catalog/years", requireAuth, async (req, res) => {
-  const authToken = (req as unknown as { authToken: string }).authToken;
-  const supabase = createSupabaseAnon({ accessToken: authToken });
-  const resolvedMarket = await resolveMarketConfiguration("automotive", { supabase: supabase as any });
-  const yearFieldKey = pickFieldKey(resolvedMarket, ["year"]);
-  if (!yearFieldKey) {
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  const response = await getMarketFieldOptionsContract({
-    marketKey: "automotive",
-    fieldKey: yearFieldKey,
-    selectedValues: {},
-    supabase
-  });
-
-  if (!response.ok) {
-    return res.status(mapEngineResponseToHttpStatus(response)).json(toPublicEngineErrorPayload(response));
-  }
-
-  return res.json({
-    ok: true,
-    data: {
-      options: mapOptionsForLegacyCatalogResponse(response.data.options)
-    }
-  });
-});
-
-router.get("/catalog/item-types", requireAuth, async (req, res) => {
-  const authToken = (req as unknown as { authToken: string }).authToken;
-  const supabase = createSupabaseAnon({ accessToken: authToken });
-  const resolvedMarket = await resolveMarketConfiguration("automotive", { supabase: supabase as any });
-  const itemTypeFieldKey = pickFieldKey(resolvedMarket, ["system", "item_type"]);
-  if (!itemTypeFieldKey) {
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  const response = await getMarketFieldOptionsContract({
-    marketKey: "automotive",
-    fieldKey: itemTypeFieldKey,
-    selectedValues: {},
-    supabase
-  });
-
-  if (!response.ok) {
-    return res.status(mapEngineResponseToHttpStatus(response)).json(toPublicEngineErrorPayload(response));
-  }
-
-  return res.json({
-    ok: true,
-    data: {
-      options: response.data.options.map((option) => ({
-        id: option.id,
-        key: option.key,
-        label_es: option.label
-      }))
-    }
-  });
-});
-
-router.get("/catalog/parts", requireAuth, async (req, res, next) => {
-  let parsedQuery: z.infer<typeof partsQuerySchema>;
-  try {
-    parsedQuery = partsQuerySchema.parse(req.query);
-  } catch (err) {
-    return next(err);
-  }
-
-  const itemTypeId = parsedQuery.item_type_id ?? parsedQuery.itemTypeId!;
-  const authToken = (req as unknown as { authToken: string }).authToken;
-  const supabase = createSupabaseAnon({ accessToken: authToken });
-  const resolvedMarket = await resolveMarketConfiguration("automotive", { supabase: supabase as any });
-  const partFieldKey = pickFieldKey(resolvedMarket, ["part"]);
-  const itemTypeFieldKey = pickFieldKey(resolvedMarket, ["system", "item_type"]);
-  if (!partFieldKey || !itemTypeFieldKey) {
-    return res.status(500).json({ ok: false, error: "unexpected_error" });
-  }
-
-  const response = await getMarketFieldOptionsContract({
-    marketKey: "automotive",
-    fieldKey: partFieldKey,
-    selectedValues: {
-      [itemTypeFieldKey]: itemTypeId
-    },
-    supabase
-  });
-
-  if (!response.ok) {
-    return res.status(mapEngineResponseToHttpStatus(response)).json(toPublicEngineErrorPayload(response));
-  }
-
-  return res.json({
-    ok: true,
-    data: {
-      item_type_id: itemTypeId,
-      options: response.data.options.map((option) => ({
-        id: option.id,
-        key: option.key,
-        label_es: option.label
-      }))
-    }
-  });
 });
 
 router.get("/catalog/departments", async (req, res) => {
