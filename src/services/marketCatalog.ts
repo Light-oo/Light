@@ -16,7 +16,50 @@ type SupabaseLike = ReturnType<typeof createSupabaseAnon>;
 
 type RawRecord = Record<string, unknown>;
 
+type MarketCardTemplate = {
+  titleTemplate: string;
+  subtitleTemplate?: string;
+  metaTemplate?: string;
+};
+
+type MarketCardTemplates = {
+  buyDemand?: MarketCardTemplate;
+  sellListing?: MarketCardTemplate;
+};
+
 const ACTIVE_COLUMNS = ["active", "is_active", "enabled", "is_enabled", "status"] as const;
+
+function getMarketCardTemplates(marketKey: string): MarketCardTemplates | undefined {
+  const normalizedMarketKey = marketKey.trim().toLowerCase();
+
+  if (normalizedMarketKey === "automotive") {
+    return {
+      buyDemand: {
+        titleTemplate: "Busco {part}",
+        subtitleTemplate: "{brand} {model} {year}"
+      },
+      sellListing: {
+        titleTemplate: "Vendo {part}",
+        subtitleTemplate: "{brand} {model} {year}"
+      }
+    };
+  }
+
+  if (normalizedMarketKey === "home_services") {
+    return {
+      buyDemand: {
+        titleTemplate: "Busco servicios de {trade}",
+        subtitleTemplate: "{experience}"
+      },
+      sellListing: {
+        titleTemplate: "Ofrezco servicios de {trade}",
+        subtitleTemplate: "{experience}"
+      }
+    };
+  }
+
+  return undefined;
+}
 
 function toStringOrNull(value: unknown): string | null {
   if (typeof value === "string" && value.trim().length > 0) {
@@ -302,6 +345,7 @@ export async function getMarketDefinition(params: {
       label: resolved.market.label,
       active: resolved.market.active
     },
+    cardTemplates: getMarketCardTemplates(resolved.market.key),
     fields: resolved.fields.map((field) => {
       const ruleMap = getFieldRuleMap(resolved, field.key);
       const inputType =
@@ -365,6 +409,18 @@ export async function getMarketDefinition(params: {
 
 export type MarketDefinitionContractData = {
   market: EngineMarketDescriptor;
+  cardTemplates?: {
+    buyDemand?: {
+      titleTemplate: string;
+      subtitleTemplate?: string;
+      metaTemplate?: string;
+    };
+    sellListing?: {
+      titleTemplate: string;
+      subtitleTemplate?: string;
+      metaTemplate?: string;
+    };
+  };
   fields: Array<{
     id: string | null;
     key: string;

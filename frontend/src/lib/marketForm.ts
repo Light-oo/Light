@@ -13,6 +13,17 @@ export type MarketFieldDefinition = {
   allowedInSell: boolean;
 };
 
+export type MarketCardTemplate = {
+  titleTemplate: string;
+  subtitleTemplate?: string;
+  metaTemplate?: string;
+};
+
+export type MarketCardTemplates = {
+  buyDemand?: MarketCardTemplate;
+  sellListing?: MarketCardTemplate;
+};
+
 export type MarketDependency = {
   fieldKey: string;
   dependsOnFieldKey: string;

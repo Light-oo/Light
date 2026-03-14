@@ -2,8 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
-import { buildGenericCardContent, parseSignatureIdentityValues } from "../lib/listingDisplay";
 import {
+  buildGenericCardContent,
+  buildTemplateCardContent,
+  parseSignatureIdentityValues
+} from "../lib/listingDisplay";
+import {
+  type MarketCardTemplates,
   normalizeMarketFields,
   resolveOrderedFlowFields,
   type MarketFieldDefinition
@@ -54,6 +59,7 @@ type MyDemandsResponse = {
 type MarketDefinitionResponse = {
   ok: true;
   data: {
+    cardTemplates?: MarketCardTemplates;
     fields: Array<{
       key: string;
       label?: string;
@@ -79,6 +85,7 @@ type MarketDefinitionResponse = {
 type MarketFieldsByKey = Record<
   string,
   {
+    cardTemplates?: MarketCardTemplates;
     buy: MarketFieldDefinition[];
     sell: MarketFieldDefinition[];
   }
@@ -175,6 +182,38 @@ function resolveRowDisplayFields(params: {
   return orderedFields.length > 0 ? orderedFields : inferDisplayFieldsFromIdentity(params.identityValues);
 }
 
+function buildTemplateValues(params: {
+  identityValues: IdentityValueMap;
+  price?: string | null;
+  location?: {
+    department: string | null;
+    municipality: string | null;
+  } | null;
+  detailsText?: string | null;
+}) {
+  const values: Record<string, string> = {
+    ...params.identityValues
+  };
+
+  if (params.price) {
+    values.price = params.price;
+  }
+
+  if (params.location?.department) {
+    values.department = params.location.department;
+  }
+
+  if (params.location?.municipality) {
+    values.municipality = params.location.municipality;
+  }
+
+  if (params.detailsText) {
+    values.detailsText = params.detailsText;
+  }
+
+  return values;
+}
+
 function ListingGroup({
   title,
   rows,
@@ -213,13 +252,24 @@ function ListingGroup({
               identityValues,
               marketFieldsByKey
             });
-            const cardContent = buildGenericCardContent({
-              intentLabel: "Vendo",
-              orderedFields: displayFields,
-              values: identityValues,
-              fallbackLabel: "Publicacion"
-            });
             const price = resolveListingPrice(row);
+            const template = marketFieldsByKey[row.marketKey]?.cardTemplates?.sellListing;
+            const cardContent = template
+              ? buildTemplateCardContent({
+                  template,
+                  values: buildTemplateValues({
+                    identityValues,
+                    price,
+                    location: row.location
+                  }),
+                  fallbackLabel: "Publicacion"
+                })
+              : buildGenericCardContent({
+                  intentLabel: "Vendo",
+                  orderedFields: displayFields,
+                  values: identityValues,
+                  fallbackLabel: "Publicacion"
+                });
 
             return (
               <article key={row.id} className="card stack listing-row">
@@ -227,7 +277,8 @@ function ListingGroup({
                   <strong>{cardContent.title}</strong>
                 </p>
                 {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
-                {price ? <p>{`Precio: ${price}`}</p> : null}
+                {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
+                {!template && price ? <p>{`Precio: ${price}`}</p> : null}
                 <p>Creado: {formatWhen(row.created_at)}</p>
                 {mode === "active" ? (
                   <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
@@ -280,12 +331,22 @@ function DemandGroup({
               identityValues,
               marketFieldsByKey
             });
-            const cardContent = buildGenericCardContent({
-              intentLabel: "Busco",
-              orderedFields: displayFields,
-              values: identityValues,
-              fallbackLabel: "Publicacion"
-            });
+            const template = marketFieldsByKey[row.marketKey]?.cardTemplates?.buyDemand;
+            const cardContent = template
+              ? buildTemplateCardContent({
+                  template,
+                  values: buildTemplateValues({
+                    identityValues,
+                    detailsText: row.request?.detailsText ?? null
+                  }),
+                  fallbackLabel: "Publicacion"
+                })
+              : buildGenericCardContent({
+                  intentLabel: "Busco",
+                  orderedFields: displayFields,
+                  values: identityValues,
+                  fallbackLabel: "Publicacion"
+                });
             const isActive = row.status === "open";
 
             return (
@@ -294,6 +355,7 @@ function DemandGroup({
                   <strong>{cardContent.title}</strong>
                 </p>
                 {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+                {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
                 <p>Creado: {formatWhen(row.created_at)}</p>
                 {isActive ? (
                   <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
@@ -363,6 +425,7 @@ export function MyListingsPage() {
         return [
           marketKey,
           {
+            cardTemplates: response.data.cardTemplates,
             buy: resolveOrderedFlowFields(normalizedFields, "BUY"),
             sell: resolveOrderedFlowFields(normalizedFields, "SELL")
           }

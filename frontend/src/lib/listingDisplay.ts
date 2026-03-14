@@ -124,7 +124,55 @@ export function buildGenericCardContent(params: {
   return {
     title: `${params.intentLabel} ${primaryValue}`.trim(),
     secondaryLine:
-      secondaryValues.length > 0 ? secondaryValues.join(secondarySeparator) : null
+      secondaryValues.length > 0 ? secondaryValues.join(secondarySeparator) : null,
+    metaLine: null
+  };
+}
+
+function normalizeRenderedTemplate(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function renderTemplate(
+  template: string | null | undefined,
+  values: Record<string, DisplayValue>
+) {
+  if (!template) {
+    return null;
+  }
+
+  const rendered = template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key: string) => {
+    const normalizedKey = key.trim();
+    return normalizeDisplayValue(values[normalizedKey]);
+  });
+
+  return normalizeRenderedTemplate(rendered);
+}
+
+export function buildTemplateCardContent(params: {
+  template: {
+    titleTemplate: string;
+    subtitleTemplate?: string;
+    metaTemplate?: string;
+  };
+  values: Record<string, DisplayValue>;
+  fallbackLabel?: string;
+}) {
+  const fallbackLabel = params.fallbackLabel ?? "Publicacion";
+
+  return {
+    title: renderTemplate(params.template.titleTemplate, params.values) ?? fallbackLabel,
+    secondaryLine: renderTemplate(params.template.subtitleTemplate, params.values),
+    metaLine: renderTemplate(params.template.metaTemplate, params.values)
   };
 }
 
