@@ -22,7 +22,7 @@ export function ForgotPasswordPage() {
 
     try {
       await requestPasswordReset(email.trim(), `${window.location.origin}/reset-password`);
-      setMessage("Password reset instructions have been sent to your email.");
+      setMessage("Las instrucciones para restablecer tu contraseña han sido enviadas a tu correo electrónico.");
     } catch (err) {
       setError(toUiErrorMessage(err));
     } finally {
@@ -33,12 +33,12 @@ export function ForgotPasswordPage() {
   return (
     <div className="screen auth-screen">
       <div className="stack auth-form">
-        <h2>Forgot your password?</h2>
-        <p>Enter your email and we will send you instructions to reset it.</p>
+        <h2>¿Olvidaste tu contraseña?</h2>
+        <p>Ingresa tu correo electrónico y te enviaremos instrucciones para restablecer tu contraseña.</p>
 
         <form onSubmit={onSubmit} className="stack">
           <label>
-            Email
+            Correo electrónico
             <input
               type="email"
               value={email}
@@ -57,11 +57,11 @@ export function ForgotPasswordPage() {
             className="primary-action-button"
             disabled={loading || !email.trim()}
           >
-            {loading ? "Sending..." : "Send reset instructions"}
+            {loading ? "Enviando..." : "Enviar instrucciones de restablecimiento"}
           </button>
 
           <button type="button" className="ghost" onClick={() => navigate("/login")}>
-            Back to login
+            Volver al inicio de sesión
           </button>
         </form>
       </div>
