@@ -1,4 +1,4 @@
-﻿import type { MarketFieldDefinition } from "./marketForm";
+﻿import type { MarketCardTemplate, MarketFieldDefinition } from "./marketForm";
 
 type DisplayValue = string | number | null | undefined;
 
@@ -159,11 +159,7 @@ export function renderTemplate(
 }
 
 export function buildTemplateCardContent(params: {
-  template: {
-    titleTemplate: string;
-    subtitleTemplate?: string;
-    metaTemplate?: string;
-  };
+  template: MarketCardTemplate;
   values: Record<string, DisplayValue>;
   fallbackLabel?: string;
 }) {
@@ -174,6 +170,74 @@ export function buildTemplateCardContent(params: {
     secondaryLine: renderTemplate(params.template.subtitleTemplate, params.values),
     metaLine: renderTemplate(params.template.metaTemplate, params.values)
   };
+}
+
+export function buildCardRenderValues(params: {
+  identityValues: Record<string, DisplayValue>;
+  price?: string | null;
+  location?: {
+    department: string | null;
+    municipality: string | null;
+  } | null;
+  detailsText?: string | null;
+}) {
+  const values: Record<string, DisplayValue> = {
+    ...params.identityValues
+  };
+
+  if (params.price) {
+    values.price = params.price;
+  }
+
+  if (params.location?.department) {
+    values.department = params.location.department;
+  }
+
+  if (params.location?.municipality) {
+    values.municipality = params.location.municipality;
+  }
+
+  if (params.detailsText) {
+    values.detailsText = params.detailsText;
+  }
+
+  return values;
+}
+
+export function buildCardContent(params: {
+  intentLabel: string;
+  orderedFields: MarketFieldDefinition[];
+  values: ListingIdentityValues;
+  fallbackLabel?: string;
+  secondarySeparator?: string;
+  template?: MarketCardTemplate;
+  price?: string | null;
+  location?: {
+    department: string | null;
+    municipality: string | null;
+  } | null;
+  detailsText?: string | null;
+}) {
+  if (params.template) {
+    return buildTemplateCardContent({
+      template: params.template,
+      values: buildCardRenderValues({
+        identityValues: params.values,
+        price: params.price,
+        location: params.location,
+        detailsText: params.detailsText
+      }),
+      fallbackLabel: params.fallbackLabel
+    });
+  }
+
+  return buildGenericCardContent({
+    intentLabel: params.intentLabel,
+    orderedFields: params.orderedFields,
+    values: params.values,
+    fallbackLabel: params.fallbackLabel,
+    secondarySeparator: params.secondarySeparator
+  });
 }
 
 export function parseSignatureIdentityValues(signature?: string | null): Record<string, string> {

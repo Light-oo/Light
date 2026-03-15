@@ -9,7 +9,7 @@ import { buildBuySearchQuery, normalizeBuySearchResponse } from "../lib/buyEngin
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
-  buildGenericCardContent,
+  buildCardContent,
   extractIdentityValuesForFields,
 } from "../lib/listingDisplay";
 import {
@@ -21,6 +21,7 @@ import {
   normalizeMarketFields,
   resetDependentValues,
   resolveOrderedFlowFields,
+  type MarketCardTemplates,
   type MarketDependency,
   type MarketFieldDefinition
 } from "../lib/marketForm";
@@ -57,6 +58,7 @@ type MarketDefinitionResponse = {
       label: string;
       active: boolean;
     };
+    cardTemplates?: MarketCardTemplates;
     fields: Array<{
       key: string;
       label?: string;
@@ -93,6 +95,7 @@ export function BuySearchPage() {
   const { marketKey, availableMarkets, setMarket } = useMarket();
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
   const [marketDependencies, setMarketDependencies] = useState<MarketDependency[]>([]);
+  const [marketCardTemplates, setMarketCardTemplates] = useState<MarketCardTemplates | undefined>(undefined);
   const [marketDefinitionLoaded, setMarketDefinitionLoaded] = useState(false);
   const [marketDefinitionKey, setMarketDefinitionKey] = useState<string | null>(null);
   const [optionsByFieldKey, setOptionsByFieldKey] = useState<Record<string, Option[]>>({});
@@ -159,6 +162,7 @@ export function BuySearchPage() {
         }
         setMarketFields(normalizeMarketFields(response.data.fields));
         setMarketDependencies(normalizeMarketDependencies(response.data.dependencies ?? []));
+        setMarketCardTemplates(response.data.cardTemplates);
         setMarketDefinitionLoaded(true);
         setMarketDefinitionKey(requestedMarketKey);
       })
@@ -167,6 +171,7 @@ export function BuySearchPage() {
           return;
         }
         setError(toUiErrorMessage(err));
+        setMarketCardTemplates(undefined);
         setMarketDefinitionLoaded(false);
         setMarketDefinitionKey(null);
       });
@@ -840,11 +845,17 @@ export function BuySearchPage() {
         const identityValues = extractIdentityValuesForFields({ identity: card.identityValues }, searchFormFields);
         const priceAmount = Number(card.price.amount);
         const formattedPrice = Number.isFinite(priceAmount) ? `$${priceAmount}` : null;
-        const cardContent = buildGenericCardContent({
+        const cardContent = buildCardContent({
           intentLabel: "Vendo",
           orderedFields: searchFormFields,
           values: identityValues,
-          fallbackLabel: "Publicacion"
+          fallbackLabel: "Publicacion",
+          template: marketCardTemplates?.sellListing,
+          price: formattedPrice,
+          location: {
+            department: card.location.department ?? null,
+            municipality: card.location.municipality ?? null
+          }
         });
 
         const reveal = revealState[card.id];
@@ -854,7 +865,8 @@ export function BuySearchPage() {
               <strong>{cardContent.title}</strong>
             </p>
             {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
-            {formattedPrice ? <p>{`Precio: ${formattedPrice}`}</p> : null}
+            {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
+            {!marketCardTemplates?.sellListing && formattedPrice ? <p>{`Precio: ${formattedPrice}`}</p> : null}
             <p>Creado: {formatWhen(card.created_at || card.audit?.createdAt || "")}</p>
 
             <RevealButton

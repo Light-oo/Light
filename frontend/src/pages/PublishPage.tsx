@@ -10,7 +10,7 @@ import { useProfileStatus } from "../context/ProfileStatusContext";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
-  buildGenericCardContent,
+  buildCardContent,
   formatMarketListingIdentity,
   type ListingIdentityValues
 } from "../lib/listingDisplay";
@@ -23,6 +23,7 @@ import {
   normalizeMarketFields,
   resetDependentValues,
   resolveOrderedFlowFields,
+  type MarketCardTemplates,
   type MarketDependency,
   type MarketFieldDefinition
 } from "../lib/marketForm";
@@ -35,10 +36,9 @@ import { type Option } from "../lib/marketOptions";
 import { mapFieldOptionsForUi } from "../lib/travelRangeOptions";
 
 type PublishSuccessCard = {
-  identityLine: string;
+  title: string;
   secondaryLine?: string | null;
-  priceLine?: string | null;
-  locationLine?: string | null;
+  metaLine?: string | null;
   createdAtIso: string;
 };
 
@@ -50,6 +50,7 @@ type MarketDefinitionResponse = {
       label: string;
       active: boolean;
     };
+    cardTemplates?: MarketCardTemplates;
     fields: Array<{
       key: string;
       label?: string;
@@ -105,6 +106,7 @@ export function PublishPage() {
 
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
   const [marketDependencies, setMarketDependencies] = useState<MarketDependency[]>([]);
+  const [marketCardTemplates, setMarketCardTemplates] = useState<MarketCardTemplates | undefined>(undefined);
   const [marketDefinitionLoaded, setMarketDefinitionLoaded] = useState(false);
   const [marketDefinitionKey, setMarketDefinitionKey] = useState<string | null>(null);
   const [optionsByFieldKey, setOptionsByFieldKey] = useState<Record<string, Option[]>>({});
@@ -196,6 +198,7 @@ export function PublishPage() {
         }
         setMarketFields(normalizeMarketFields(response.data.fields));
         setMarketDependencies(normalizeMarketDependencies(response.data.dependencies ?? []));
+        setMarketCardTemplates(response.data.cardTemplates);
         setMarketDefinitionLoaded(true);
         setMarketDefinitionKey(requestedMarketKey);
       })
@@ -204,6 +207,7 @@ export function PublishPage() {
           return;
         }
         setError(toUiErrorMessage(err));
+        setMarketCardTemplates(undefined);
         setMarketDefinitionLoaded(false);
         setMarketDefinitionKey(null);
       });
@@ -673,11 +677,17 @@ export function PublishPage() {
 
   function buildSuccessCardContent() {
     const identityValues = resolvedIdentityValues();
-    return buildGenericCardContent({
+    return buildCardContent({
       intentLabel: "Vendo",
       orderedFields: publishFormFields,
       values: identityValues,
-      fallbackLabel: "Publicacion"
+      fallbackLabel: "Publicacion",
+      template: marketCardTemplates?.sellListing,
+      price: requiresPrice ? buildSuccessPriceLine() : null,
+      location: {
+        department: locationDepartment || null,
+        municipality: locationMunicipality || null
+      }
     });
   }
 
@@ -821,10 +831,11 @@ export function PublishPage() {
       const successContent = buildSuccessCardContent();
 
       const nextSuccessCard = {
-        identityLine: successContent.title.replace(/^Vendo\s+/i, ""),
+        title: successContent.title,
         secondaryLine: successContent.secondaryLine,
-        priceLine: requiresPrice ? buildSuccessPriceLine() : null,
-        locationLine: null,
+        metaLine:
+          successContent.metaLine ??
+          (!marketCardTemplates?.sellListing && requiresPrice ? buildSuccessPriceLine() : null),
         createdAtIso: new Date().toISOString()
       };
       setSuccessCard(nextSuccessCard);
@@ -967,9 +978,9 @@ export function PublishPage() {
       {successCard ? (
         <div className="stack gap-sm">
           <article className="card stack card-elevated demand-card-compact">
-            <p><strong>{`Vendo ${successCard.identityLine}`}</strong></p>
+            <p><strong>{successCard.title}</strong></p>
             {successCard.secondaryLine ? <p>{successCard.secondaryLine}</p> : null}
-            {successCard.priceLine ? <p>{`Precio: ${successCard.priceLine}`}</p> : null}
+            {successCard.metaLine ? <p>{successCard.metaLine}</p> : null}
             <p>Creado: {formatWhen(successCard.createdAtIso)}</p>
           </article>
           <div className="stack gap-sm publish-success-actions">

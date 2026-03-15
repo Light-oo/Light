@@ -3,8 +3,7 @@ import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
-  buildGenericCardContent,
-  buildTemplateCardContent,
+  buildCardContent,
   parseSignatureIdentityValues
 } from "../lib/listingDisplay";
 import {
@@ -182,38 +181,6 @@ function resolveRowDisplayFields(params: {
   return orderedFields.length > 0 ? orderedFields : inferDisplayFieldsFromIdentity(params.identityValues);
 }
 
-function buildTemplateValues(params: {
-  identityValues: IdentityValueMap;
-  price?: string | null;
-  location?: {
-    department: string | null;
-    municipality: string | null;
-  } | null;
-  detailsText?: string | null;
-}) {
-  const values: Record<string, string> = {
-    ...params.identityValues
-  };
-
-  if (params.price) {
-    values.price = params.price;
-  }
-
-  if (params.location?.department) {
-    values.department = params.location.department;
-  }
-
-  if (params.location?.municipality) {
-    values.municipality = params.location.municipality;
-  }
-
-  if (params.detailsText) {
-    values.detailsText = params.detailsText;
-  }
-
-  return values;
-}
-
 function ListingGroup({
   title,
   rows,
@@ -254,22 +221,15 @@ function ListingGroup({
             });
             const price = resolveListingPrice(row);
             const template = marketFieldsByKey[row.marketKey]?.cardTemplates?.sellListing;
-            const cardContent = template
-              ? buildTemplateCardContent({
-                  template,
-                  values: buildTemplateValues({
-                    identityValues,
-                    price,
-                    location: row.location
-                  }),
-                  fallbackLabel: "Publicacion"
-                })
-              : buildGenericCardContent({
-                  intentLabel: "Vendo",
-                  orderedFields: displayFields,
-                  values: identityValues,
-                  fallbackLabel: "Publicacion"
-                });
+            const cardContent = buildCardContent({
+              intentLabel: "Vendo",
+              orderedFields: displayFields,
+              values: identityValues,
+              fallbackLabel: "Publicacion",
+              template,
+              price,
+              location: row.location
+            });
 
             return (
               <article key={row.id} className="card stack listing-row">
@@ -332,21 +292,14 @@ function DemandGroup({
               marketFieldsByKey
             });
             const template = marketFieldsByKey[row.marketKey]?.cardTemplates?.buyDemand;
-            const cardContent = template
-              ? buildTemplateCardContent({
-                  template,
-                  values: buildTemplateValues({
-                    identityValues,
-                    detailsText: row.request?.detailsText ?? null
-                  }),
-                  fallbackLabel: "Publicacion"
-                })
-              : buildGenericCardContent({
-                  intentLabel: "Busco",
-                  orderedFields: displayFields,
-                  values: identityValues,
-                  fallbackLabel: "Publicacion"
-                });
+            const cardContent = buildCardContent({
+              intentLabel: "Busco",
+              orderedFields: displayFields,
+              values: identityValues,
+              fallbackLabel: "Publicacion",
+              template,
+              detailsText: row.request?.detailsText ?? null
+            });
             const isActive = row.status === "open";
 
             return (
