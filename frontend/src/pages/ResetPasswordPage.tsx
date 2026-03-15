@@ -119,10 +119,10 @@ export function ResetPasswordPage() {
       return null;
     }
     if (password.length < MIN_PASSWORD_LENGTH) {
-      return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+      return `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`;
     }
     if (password !== confirmPassword) {
-      return "Passwords do not match.";
+      return "Las contraseñas no coinciden.";
     }
     return null;
   }, [confirmPassword, password]);
@@ -134,7 +134,7 @@ export function ResetPasswordPage() {
     }
 
     if (!password || !confirmPassword) {
-      setError("Password cannot be empty.");
+      setError("La contraseña no puede estar vacía.");
       return;
     }
 
@@ -148,7 +148,7 @@ export function ResetPasswordPage() {
 
     try {
       await updatePassword(password);
-      setSuccessMessage("Your password has been updated successfully.");
+      setSuccessMessage("Tu contraseña se ha actualizado correctamente.");
       setViewState("success");
       await clearSupabaseSession();
     } catch (err) {
@@ -166,21 +166,21 @@ export function ResetPasswordPage() {
   return (
     <div className="screen auth-screen">
       <div className="stack auth-form">
-        <h2>Reset Password</h2>
+        <h2>Restablecer contraseña</h2>
 
-        {viewState === "loading" ? <p>Loading reset link...</p> : null}
+        {viewState === "loading" ? <p>Validando enlace de restablecimiento...</p> : null}
 
         {viewState === "invalid" ? (
           <div className="stack">
-            <p>This reset link is invalid or expired.</p>
-            <p>Please request a new password reset.</p>
+            <p>Este enlace de restablecimiento es inválido o ha expirado.</p>
+            <p>Solicita un nuevo restablecimiento de contraseña.</p>
           </div>
         ) : null}
 
         {viewState === "form" ? (
           <form onSubmit={onSubmit} className="stack">
             <PasswordField
-              label="New password"
+              label="Nueva contraseña"
               value={password}
               onChange={setPassword}
               required
@@ -190,7 +190,7 @@ export function ResetPasswordPage() {
             />
 
             <PasswordField
-              label="Confirm password"
+              label="Confirmar contraseña"
               value={confirmPassword}
               onChange={setConfirmPassword}
               required
@@ -202,7 +202,7 @@ export function ResetPasswordPage() {
             {error ? <p className="error">{error}</p> : null}
 
             <button type="submit" className="primary-action-button" disabled={loading}>
-              {loading ? "Updating..." : "Save password"}
+              {loading ? "Actualizando..." : "Guardar contraseña"}
             </button>
           </form>
         ) : null}

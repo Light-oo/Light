@@ -4,7 +4,7 @@ type PlaceholderPageProps = {
   message?: string;
 };
 
-export function PlaceholderPage({ message = "This section is planned but not implemented yet." }: PlaceholderPageProps) {
+export function PlaceholderPage({ message = "Esta sección está planificada pero aún no está implementada." }: PlaceholderPageProps) {
   const navigate = useNavigate();
 
   return (
@@ -12,7 +12,7 @@ export function PlaceholderPage({ message = "This section is planned but not imp
       <div className="stack auth-form">
         <p>{message}</p>
         <button type="button" onClick={() => navigate("/")}>
-          Back to Home
+          Volver al inicio
         </button>
       </div>
     </div>

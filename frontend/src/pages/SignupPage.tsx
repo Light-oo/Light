@@ -28,12 +28,12 @@ export function SignupPage() {
     }
 
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+      setError("La contraseña debe tener al menos 8 caracteres.");
       return;
     }
 
     if (password !== confirmPassword) {
-      setError("Password and Confirm Password must match.");
+      setError("La contraseña y la confirmación deben coincidir.");
       return;
     }
     if (!tosAccepted) {
@@ -49,7 +49,7 @@ export function SignupPage() {
       navigate("/verify-whatsapp", { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.payload?.error === "email_already_in_use") {
-        setError("Email is already in use.");
+        setError("Este correo electrónico ya está en uso.");
       } else {
         setError(toUiErrorMessage(err));
       }
@@ -60,10 +60,10 @@ export function SignupPage() {
 
   return (
     <div className="screen auth-screen">
-      <h2>Create Account</h2>
+      <h2>Crear cuenta</h2>
       <form onSubmit={onSubmit} className="stack auth-form">
         <label>
-          Email
+          Correo electrónico
           <input
             type="email"
             value={email}
@@ -74,7 +74,7 @@ export function SignupPage() {
         </label>
 
         <PasswordField
-          label="Password"
+          label="Contraseña"
           value={password}
           onChange={setPassword}
           required
@@ -83,7 +83,7 @@ export function SignupPage() {
         />
 
         <PasswordField
-          label="Confirm Password"
+          label="Confirmar contraseña"
           value={confirmPassword}
           onChange={setConfirmPassword}
           required
@@ -116,10 +116,10 @@ export function SignupPage() {
         {error ? <p className="error">{error}</p> : null}
 
         <button type="submit" disabled={!canSubmit}>
-          Create Account
+          Crear cuenta
         </button>
         <button type="button" className="ghost" onClick={() => navigate("/")}>
-          Cancel
+          Cancelar
         </button>
       </form>
     </div>

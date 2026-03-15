@@ -19,7 +19,7 @@ export function GlobalLoader({ visible, mode = "overlay" }: GlobalLoaderProps) {
   }
 
   return (
-    <div className="loader-overlay" aria-label="Loading" role="status">
+    <div className="loader-overlay" aria-label="Cargando" role="status">
       <img src={logoLoader} alt="" className="loader-logo loader-logo-overlay" />
     </div>
   );

@@ -38,10 +38,10 @@ export function LoginPage() {
 
   return (
     <div className="screen auth-screen">
-      <h2>Sign In</h2>
+      <h2>Iniciar sesión</h2>
       <form onSubmit={onSubmit} className="stack">
         <label>
-          Email
+          Correo electrónico
           <input
             type="email"
             value={email}
@@ -52,7 +52,7 @@ export function LoginPage() {
         </label>
 
         <PasswordField
-          label="Password"
+          label="Contraseña"
           value={password}
           onChange={setPassword}
           required
@@ -64,16 +64,16 @@ export function LoginPage() {
           className="auth-link-button"
           onClick={() => navigate("/forgot-password")}
         >
-          Forgot password?
+          ¿Olvidaste tu contraseña?
         </button>
 
         {error ? <p className="error">{error}</p> : null}
 
         <button type="submit" disabled={loading}>
-          Sign in
+          Iniciar sesión
         </button>
         <button type="button" className="ghost" onClick={() => navigate("/signup")}>
-          New User? Create an Account.
+          ¿Usuario nuevo? Crear una cuenta.
         </button>
       </form>
     </div>
