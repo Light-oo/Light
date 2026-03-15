@@ -178,6 +178,22 @@ body {
   text-underline-offset: 2px;
 }
 
+.auth-link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.auth-inline-panel {
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
 .password-input-shell {
   position: relative;
   display: flex;

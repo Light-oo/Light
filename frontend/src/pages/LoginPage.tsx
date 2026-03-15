@@ -59,6 +59,14 @@ export function LoginPage() {
           autoComplete="current-password"
         />
 
+        <button
+          type="button"
+          className="auth-link-button"
+          onClick={() => navigate("/forgot-password")}
+        >
+          Forgot password?
+        </button>
+
         {error ? <p className="error">{error}</p> : null}
 
         <button type="submit" disabled={loading}>

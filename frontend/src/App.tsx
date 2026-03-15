@@ -6,12 +6,14 @@ import { GlobalLoader } from "./components/GlobalLoader";
 import { useLoading } from "./context/LoadingContext";
 import { AccountPage } from "./pages/AccountPage";
 import { BuySearchPage } from "./pages/BuySearchPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MarketSelectPage } from "./pages/MarketSelectPage";
 import { MyListingsPage } from "./pages/MyListingsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { PublishPage } from "./pages/PublishPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { SellDemandsPage } from "./pages/SellDemandsPage";
 import { SignupPage } from "./pages/SignupPage";
 import { TermsPage } from "./pages/TermsPage";
@@ -32,6 +34,8 @@ export function App() {
           element={<PlaceholderPage message="Esta sección está planificada pero aún no está lista." />}
         />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/signup" element={<SignupPage />} />
 
         <Route element={<RequireAuth />}>
