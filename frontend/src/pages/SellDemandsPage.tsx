@@ -1,13 +1,14 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
+import { CertificationBadge } from "../components/CertificationBadge";
 import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
 import { useMarket } from "../context/MarketContext";
 import { useOptions } from "../context/OptionsContext";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
-  buildGenericCardContent
+  buildCardContent
 } from "../lib/listingDisplay";
 import {
   buildDependencyMaps,
@@ -17,6 +18,7 @@ import {
   normalizeMarketFields,
   resetDependentValues,
   resolveOrderedFlowFields,
+  type MarketCardTemplates,
   type MarketDependency,
   type MarketFieldDefinition
 } from "../lib/marketForm";
@@ -31,6 +33,7 @@ type MarketDefinitionResponse = {
       label: string;
       active: boolean;
     };
+    cardTemplates?: MarketCardTemplates;
     fields: Array<{
       key: string;
       label?: string;
@@ -66,6 +69,7 @@ type DemandSearchResult = {
   marketKey: string;
   identityValues: Record<string, string>;
   signature: string;
+  isCertified?: boolean;
   status: string;
   created_at: string;
   type: "buy";
@@ -83,11 +87,6 @@ type DemandSearchResult = {
 
 type DemandSearchResponse = {
   ok: true;
-  marketKey?: string;
-  results?: DemandSearchResult[];
-  page?: number;
-  pageSize?: number;
-  total?: number;
   data?: {
     marketKey?: string;
     results?: DemandSearchResult[];
@@ -111,21 +110,12 @@ function normalizeDemandSearchResponse(payload: DemandSearchResponse) {
     throw new Error("invalid_demand_search_response");
   }
 
-  if (Array.isArray(payload.results)) {
-    return {
-      results: payload.results,
-      page: Number(payload.page ?? 1),
-      pageSize: Number(payload.pageSize ?? 20),
-      total: Number(payload.total ?? payload.results.length)
-    };
-  }
-
   if (Array.isArray(payload.data?.results)) {
     return {
       results: payload.data.results,
-      page: Number(payload.data.page ?? payload.page ?? 1),
-      pageSize: Number(payload.data.pageSize ?? payload.pageSize ?? 20),
-      total: Number(payload.data.total ?? payload.total ?? payload.data.results.length)
+      page: Number(payload.data.page ?? 1),
+      pageSize: Number(payload.data.pageSize ?? 20),
+      total: Number(payload.data.total ?? payload.data.results.length)
     };
   }
 
@@ -163,6 +153,7 @@ export function SellDemandsPage() {
 
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
   const [marketDependencies, setMarketDependencies] = useState<MarketDependency[]>([]);
+  const [marketCardTemplates, setMarketCardTemplates] = useState<MarketCardTemplates | undefined>(undefined);
   const [marketDefinitionLoaded, setMarketDefinitionLoaded] = useState(false);
   const [marketDefinitionKey, setMarketDefinitionKey] = useState<string | null>(null);
 
@@ -191,6 +182,7 @@ export function SellDemandsPage() {
     setMarketDefinitionKey(null);
     setMarketFields([]);
     setMarketDependencies([]);
+    setMarketCardTemplates(undefined);
     setOptionsByFieldKey({});
     setStructuredValues({});
     setSearched(false);
@@ -220,6 +212,7 @@ export function SellDemandsPage() {
         }
         setMarketFields(normalizeMarketFields(response.data.fields));
         setMarketDependencies(normalizeMarketDependencies(response.data.dependencies ?? []));
+        setMarketCardTemplates(response.data.cardTemplates);
         setMarketDefinitionLoaded(true);
         setMarketDefinitionKey(requestedMarketKey);
       })
@@ -228,6 +221,7 @@ export function SellDemandsPage() {
           return;
         }
         setError(toUiErrorMessage(err));
+        setMarketCardTemplates(undefined);
         setMarketDefinitionLoaded(false);
         setMarketDefinitionKey(null);
       });
@@ -641,18 +635,28 @@ export function SellDemandsPage() {
             resolveFieldDisplayValue(fieldKey, value)
           ])
         );
-        const cardContent = buildGenericCardContent({
+        const cardContent = buildCardContent({
           intentLabel: "Busco",
           orderedFields: sellFormFields,
           values: displayIdentityValues,
-          fallbackLabel: "Publicacion"
+          fallbackLabel: "Publicacion",
+          template: marketCardTemplates?.buyDemand,
+          detailsText: card.request?.detailsText ?? null,
+          location: {
+            department: card.location?.department ?? null,
+            municipality: null
+          }
         });
         const createdAt = card.created_at || card.audit?.createdAt || "";
         const requesterUserId = String(card.audit?.requesterUserId ?? "").trim();
         const reveal = revealState[card.id];
 
         return (
-          <article key={card.id} className="card stack card-elevated demand-card-compact">
+          <article
+            key={card.id}
+            className={card.isCertified ? "card stack card-elevated demand-card-compact card-with-certification" : "card stack card-elevated demand-card-compact"}
+          >
+            {card.isCertified ? <CertificationBadge /> : null}
             <p><strong>{cardContent.title}</strong></p>
             {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
             <p>Creado: {formatWhen(createdAt)}</p>

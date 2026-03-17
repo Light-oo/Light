@@ -1,7 +1,8 @@
 import { Router } from "express";
+import { logSystemError } from "../lib/logger";
 import { createSupabaseServiceRole } from "../lib/supabase";
 import { resolveMarketConfiguration, type ResolvedMarket } from "../services/marketResolution";
-import { loadFieldVocabulary, type VocabularyOption } from "../services/marketVocabulary";
+import { parseSignatureValues, resolveDisplayIdentityValues } from "../utils/marketIdentity";
 
 const router = Router();
 
@@ -9,7 +10,8 @@ type RawRecord = Record<string, unknown>;
 
 type LandingDemandRow = {
   id: string;
-  market_key: string | null;
+  market_id: string | null;
+  is_certified: boolean | null;
   status: string | null;
   created_at: string | null;
   intention_signature: string | null;
@@ -38,37 +40,6 @@ function uniqueNonEmpty(values: Array<string | null | undefined>) {
   );
 }
 
-function parseSignatureValues(signature: unknown): Record<string, string> {
-  const text = normalizeText(signature);
-  if (!text.includes("|")) {
-    return {};
-  }
-
-  const parts = text.split("|").slice(1);
-  const values: Record<string, string> = {};
-  for (const part of parts) {
-    const separatorIndex = part.indexOf("=");
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    const key = part.slice(0, separatorIndex).trim().toLowerCase();
-    const value = part.slice(separatorIndex + 1).trim();
-    if (!key || !value) {
-      continue;
-    }
-    values[key] = value;
-  }
-  return values;
-}
-
-function dependencySignature(values: Record<string, string>) {
-  return Object.entries(values)
-    .filter(([, value]) => value.trim().length > 0)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${value}`)
-    .join("&");
-}
-
 async function buildResolvedMarketMap(marketKeys: string[]) {
   const uniqueMarketKeys = uniqueNonEmpty(marketKeys);
   const entries = await Promise.all(
@@ -80,67 +51,33 @@ async function buildResolvedMarketMap(marketKeys: string[]) {
   return new Map<string, ResolvedMarket>(entries);
 }
 
-async function resolveDisplayIdentityValues(
-  resolvedMarket: ResolvedMarket,
-  identityValues: Record<string, string>
+async function buildMarketKeyByIdMap(
+  supabase: ReturnType<typeof createSupabaseServiceRole>,
+  marketIds: Array<string | null | undefined>
 ) {
-  const displayIdentityValues: Record<string, string> = {};
-  const dependencyMap = new Map<string, string[]>();
-  const vocabularyCache = new Map<string, VocabularyOption[]>();
-
-  for (const dependency of resolvedMarket.dependencies) {
-    const childKey = normalizeText(dependency.fieldKey).toLowerCase();
-    const parentKey = normalizeText(dependency.dependsOnFieldKey).toLowerCase();
-    if (!childKey || !parentKey) {
-      continue;
-    }
-    const current = dependencyMap.get(childKey) ?? [];
-    if (!current.includes(parentKey)) {
-      current.push(parentKey);
-      dependencyMap.set(childKey, current);
-    }
+  const uniqueMarketIds = uniqueNonEmpty(marketIds);
+  if (uniqueMarketIds.length === 0) {
+    return new Map<string, string>();
   }
 
-  for (const field of resolvedMarket.fields) {
-    const fieldKey = field.key.toLowerCase();
-    const rawValue = identityValues[fieldKey];
-    if (!rawValue) {
-      continue;
-    }
+  const { data, error } = await supabase
+    .from("markets")
+    .select("id,key")
+    .in("id", uniqueMarketIds);
 
-    const dependsOn = dependencyMap.get(fieldKey) ?? [];
-    const selectedValues: Record<string, string> = {};
-    for (const parentKey of dependsOn) {
-      const parentValue = identityValues[parentKey];
-      if (parentValue) {
-        selectedValues[parentKey] = parentValue;
-      }
-    }
-
-    const cacheKey = `${resolvedMarket.market.key}::${fieldKey}::${dependencySignature(selectedValues)}`;
-    let options = vocabularyCache.get(cacheKey);
-    if (!options) {
-      try {
-        const vocabulary = await loadFieldVocabulary({
-          marketKey: resolvedMarket.market.key,
-          fieldKey,
-          selectedValues,
-          resolvedMarket
-        });
-        options = vocabulary.options;
-      } catch {
-        options = [];
-      }
-      vocabularyCache.set(cacheKey, options);
-    }
-
-    const match = options.find(
-      (option) => option.key.toLowerCase() === rawValue.toLowerCase() || option.id === rawValue
-    );
-    displayIdentityValues[fieldKey] = match?.label ?? rawValue;
+  if (error) {
+    throw error;
   }
 
-  return displayIdentityValues;
+  const out = new Map<string, string>();
+  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    const id = normalizeText((row as any).id);
+    const key = normalizeText((row as any).key);
+    if (id && key) {
+      out.set(id, key);
+    }
+  }
+  return out;
 }
 
 router.get("/landing/latest-demands", async (_req, res) => {
@@ -148,13 +85,13 @@ router.get("/landing/latest-demands", async (_req, res) => {
     const supabase = createSupabaseServiceRole();
     const { data, error } = await supabase
       .from("demands")
-      .select("id,market_key,status,created_at,intention_signature,details_text")
+      .select("id,market_id,is_certified,status,created_at,intention_signature,details_text")
       .eq("status", "open")
       .order("created_at", { ascending: false })
       .limit(3);
 
     if (error) {
-      console.error("landing_latest_demands_query_error", {
+      logSystemError("landing_latest_demands_query_error", {
         code: error.code,
         message: error.message,
         details: (error as any)?.details,
@@ -164,18 +101,22 @@ router.get("/landing/latest-demands", async (_req, res) => {
     }
 
     const rows = (data ?? []) as LandingDemandRow[];
+    const marketKeyById = await buildMarketKeyByIdMap(
+      supabase,
+      rows.map((row) => normalizeText(row.market_id))
+    );
     const resolvedMarketByKey = await buildResolvedMarketMap(
-      rows.map((row) => normalizeText(row.market_key))
+      rows.map((row) => marketKeyById.get(normalizeText(row.market_id)) ?? "")
     );
 
     const payload = await Promise.all(
       rows.map(async (row) => {
-        const marketKey = normalizeText(row.market_key);
+        const marketKey = marketKeyById.get(normalizeText(row.market_id)) ?? "";
         const signature = normalizeText(row.intention_signature);
         const identityValues = parseSignatureValues(signature);
         const resolvedMarket = resolvedMarketByKey.get(marketKey);
         const displayIdentityValues = resolvedMarket
-          ? await resolveDisplayIdentityValues(resolvedMarket, identityValues)
+          ? await resolveDisplayIdentityValues({ supabase: supabase as any, resolvedMarket, identityValues })
           : identityValues;
 
         return {
@@ -183,6 +124,7 @@ router.get("/landing/latest-demands", async (_req, res) => {
           marketKey,
           identityValues: displayIdentityValues,
           signature,
+          isCertified: Boolean(row.is_certified),
           status: normalizeNullableText(row.status),
           created_at: normalizeNullableText(row.created_at),
           request: {
@@ -192,9 +134,14 @@ router.get("/landing/latest-demands", async (_req, res) => {
       })
     );
 
-    return res.json(payload);
+    return res.json({
+      ok: true,
+      data: {
+        results: payload
+      }
+    });
   } catch (error: any) {
-    console.error("landing_latest_demands_error", {
+    logSystemError("landing_latest_demands_error", {
       message: error?.message,
       code: error?.code,
       details: error?.details,

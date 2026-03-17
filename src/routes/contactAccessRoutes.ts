@@ -1,21 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
-import { logWarn } from "../lib/logger";
+import { logError, logInfo, logWarn } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
 import { requireWhatsappNumber } from "../services/profileStatus";
 
 const router = Router();
-
-type RevealRateBucket = {
-  lastRevealAtMs: number | null;
-  revealTimestampsMs: number[];
-};
-
-const revealRateStore = new Map<string, RevealRateBucket>();
-const revealMinIntervalMs = 2_000;
-const revealRollingWindowMs = 60_000;
-const revealRollingWindowMax = 10;
 
 const bodySchema = z
   .object({
@@ -39,38 +29,23 @@ function toWhatsAppUrl(raw: string) {
   return `https://wa.me/${digits}`;
 }
 
-function consumeRevealRateLimit(userId: string) {
-  const now = Date.now();
-  const current = revealRateStore.get(userId) ?? {
-    lastRevealAtMs: null,
-    revealTimestampsMs: []
-  };
-
-  if (current.lastRevealAtMs !== null && now - current.lastRevealAtMs < revealMinIntervalMs) {
-    return {
-      allowed: false,
-      retryAfterMs: revealMinIntervalMs - (now - current.lastRevealAtMs)
-    };
-  }
-
-  const windowStart = now - revealRollingWindowMs;
-  const recent = current.revealTimestampsMs.filter((ts) => ts > windowStart);
-
-  if (recent.length >= revealRollingWindowMax) {
-    const oldestInWindow = recent[0] ?? now;
-    return {
-      allowed: false,
-      retryAfterMs: Math.max(0, oldestInWindow + revealRollingWindowMs - now)
-    };
-  }
-
-  recent.push(now);
-  revealRateStore.set(userId, {
-    lastRevealAtMs: now,
-    revealTimestampsMs: recent
+async function consumeRevealRateLimit(
+  supabase: ReturnType<typeof createSupabaseAnon>,
+  userId: string
+) {
+  const { data, error } = await supabase.rpc("consume_reveal_rate_limit", {
+    p_user_id: userId
   });
 
-  return { allowed: true as const, retryAfterMs: 0 };
+  if (error) {
+    throw error;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    allowed: Boolean((row as any)?.allowed),
+    retryAfterMs: Math.max(0, Number((row as any)?.retry_after_ms ?? 0) || 0)
+  };
 }
 
 router.post("/contact-access", requireAuth, async (req, res, next) => {
@@ -93,14 +68,26 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
       logWarn(req, "reveal_blocked_whatsapp_missing", { userId, listingId: listingId ?? null, demandId: demandId ?? null });
       return res.status(403).json({ ok: false, error: "WHATSAPP_REQUIRED" });
     }
-    console.error("profile_status_error", {
+    logError(req, "profile_status_error", {
       code: profileStatusError?.code,
       message: profileStatusError?.message
     });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
-  const rateLimit = consumeRevealRateLimit(userId);
+  let rateLimit;
+  try {
+    rateLimit = await consumeRevealRateLimit(supabase, userId);
+  } catch (rateLimitError: any) {
+    logError(req, "reveal_rate_limit_error", {
+      code: rateLimitError?.code,
+      message: rateLimitError?.message,
+      details: rateLimitError?.details,
+      hint: rateLimitError?.hint
+    });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
   if (!rateLimit.allowed) {
     logWarn(req, "reveal_rate_limited", {
       userId,
@@ -120,7 +107,7 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
       .maybeSingle();
 
     if (demandLookupError) {
-      console.error("supabase_error", {
+      logError(req, "reveal_demand_lookup_error", {
         code: demandLookupError.code,
         message: demandLookupError.message,
         details: (demandLookupError as any)?.details,
@@ -158,7 +145,7 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
         return res.status(403).json({ ok: false, error: "OWN_DEMAND_REVEAL_BLOCKED" });
       }
 
-      console.error("supabase_error", {
+      logError(req, "reveal_demand_rpc_error", {
         code,
         message,
         details: (error as any)?.details,
@@ -174,6 +161,13 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
     if (!whatsappUrl) {
       return res.status(400).json({ ok: false, error: "demand_has_no_contact" });
     }
+
+    logInfo(req, "reveal_completed", {
+      userId,
+      targetType: "demand",
+      demandId,
+      didConsume
+    });
 
     return res.json({
       ok: true,
@@ -194,7 +188,7 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
     .maybeSingle();
 
   if (ownListingCheckError) {
-    console.error("supabase_error", {
+    logError(req, "reveal_listing_ownership_check_error", {
       code: ownListingCheckError.code,
       message: ownListingCheckError.message,
       details: (ownListingCheckError as any)?.details,
@@ -215,7 +209,7 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
     .maybeSingle();
 
   if (activeCardError) {
-    console.error("supabase_error", {
+    logError(req, "reveal_listing_active_check_error", {
       code: activeCardError.code,
       message: activeCardError.message,
       details: (activeCardError as any)?.details,
@@ -245,7 +239,7 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
     return res.status(400).json({ ok: false, error: "listing_not_active" });
   }
 
-  console.error("supabase_error", {
+  logError(req, "reveal_listing_rpc_error", {
     code,
     message,
     details: (error as any)?.details,
@@ -262,6 +256,13 @@ router.post("/contact-access", requireAuth, async (req, res, next) => {
   if (!whatsappUrl) {
     return res.status(400).json({ ok: false, error: "listing_has_no_contact" });
   }
+
+  logInfo(req, "reveal_completed", {
+    userId,
+    targetType: "listing",
+    listingId,
+    didConsume
+  });
 
   return res.json({
     ok: true,

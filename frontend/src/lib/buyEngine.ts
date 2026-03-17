@@ -1,6 +1,7 @@
 import type { MarketFieldDefinition } from "./marketForm";
 
 export type BuyDemandAction = "created" | "updated" | "existing";
+export type BuyDemandCertificationAction = "certified" | "already_certified";
 
 export type NormalizedBuySearchResponse<TCard> = {
   results: TCard[];
@@ -9,6 +10,9 @@ export type NormalizedBuySearchResponse<TCard> = {
   total: number;
   reason?: string;
   demandAction?: BuyDemandAction;
+  demandId?: string;
+  isCertified?: boolean;
+  certificationAction?: BuyDemandCertificationAction;
 };
 
 function toNumber(value: unknown, fallback: number) {
@@ -31,11 +35,19 @@ function toDemandAction(value: unknown): BuyDemandAction | undefined {
   return undefined;
 }
 
+function toCertificationAction(value: unknown): BuyDemandCertificationAction | undefined {
+  if (value === "certified" || value === "already_certified") {
+    return value;
+  }
+  return undefined;
+}
+
 export function buildBuySearchQuery(params: {
   marketKey: string;
   fields: MarketFieldDefinition[];
   structuredValues: Record<string, string>;
   detailsText: string;
+  certify?: boolean;
   page: number;
   pageSize: number;
 }) {
@@ -44,7 +56,8 @@ export function buildBuySearchQuery(params: {
     marketKey: params.marketKey,
     page: params.page,
     pageSize: params.pageSize,
-    detailsText: params.detailsText || undefined
+    detailsText: params.detailsText || undefined,
+    certify: params.certify ? "true" : undefined
   };
 
   for (const field of params.fields) {
@@ -67,33 +80,17 @@ export function normalizeBuySearchResponse<TCard>(
     throw new Error("invalid_buy_search_response");
   }
 
-  if (Array.isArray(row.results)) {
-    return {
-      results: row.results as TCard[],
-      page: toNumber(row.page, 1),
-      pageSize: toNumber(row.pageSize, 20),
-      total: toNumber(row.total, (row.results as unknown[]).length),
-      reason: typeof row.data?.reason === "string" ? row.data.reason : undefined,
-      demandAction: toDemandAction(row.data?.demandAction)
-    };
-  }
-
   if (Array.isArray(row.data?.results)) {
     return {
       results: row.data.results as TCard[],
-      page: toNumber(row.meta?.page ?? row.data?.page, 1),
-      pageSize: toNumber(row.meta?.pageSize ?? row.data?.pageSize, 20),
-      total: toNumber(
-        row.meta?.total ?? row.data?.total,
-        (row.data.results as unknown[]).length
-      ),
-      reason:
-        typeof row.data?.reason === "string"
-          ? row.data.reason
-          : typeof row.data?.context?.reason === "string"
-            ? row.data.context.reason
-            : undefined,
-      demandAction: toDemandAction(row.data?.demandAction ?? row.data?.context?.demandAction)
+      page: toNumber(row.data?.page, 1),
+      pageSize: toNumber(row.data?.pageSize, 20),
+      total: toNumber(row.data?.total, (row.data.results as unknown[]).length),
+      reason: typeof row.data?.reason === "string" ? row.data.reason : undefined,
+      demandAction: toDemandAction(row.data?.demandAction),
+      demandId: typeof row.data?.demandId === "string" ? row.data.demandId : undefined,
+      isCertified: typeof row.data?.isCertified === "boolean" ? row.data.isCertified : undefined,
+      certificationAction: toCertificationAction(row.data?.certificationAction)
     };
   }
 

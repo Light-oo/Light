@@ -1,6 +1,8 @@
 ﻿import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
+import { CertificationBadge } from "../components/CertificationBadge";
 import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
 import { useMarket } from "../context/MarketContext";
@@ -8,6 +10,7 @@ import { useOptions } from "../context/OptionsContext";
 import { buildBuySearchQuery, normalizeBuySearchResponse } from "../lib/buyEngine";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
+import type { MarketDefinitionResponse } from "../lib/marketDefinition";
 import {
   buildCardContent,
   extractIdentityValuesForFields,
@@ -33,6 +36,7 @@ type BuyCard = {
   marketKey: string;
   identityValues: Record<string, string>;
   signature: string;
+  isCertified?: boolean;
   status: string;
   created_at: string;
   type: "sell";
@@ -50,49 +54,18 @@ type RevealResponse = {
   };
 };
 
-type MarketDefinitionResponse = {
-  ok: true;
-  data: {
-    market: {
-      key: string;
-      label: string;
-      active: boolean;
-    };
-    cardTemplates?: MarketCardTemplates;
-    fields: Array<{
-      key: string;
-      label?: string;
-      label_es?: string;
-      required?: boolean;
-      requiredInBuy?: boolean;
-      required_in_buy?: boolean;
-      requiredInSell?: boolean;
-      required_in_sell?: boolean;
-      order?: number;
-      sortOrder?: number;
-      type?: string | null;
-      inputType?: string;
-      input_type?: string;
-      allowedInBuy?: boolean;
-      allowed_in_buy?: boolean;
-      allowedInSell?: boolean;
-      allowed_in_sell?: boolean;
-    }>;
-    dependencies?: Array<{
-      fieldKey?: string;
-      field_key?: string;
-      dependsOnFieldKey?: string;
-      depends_on_field_key?: string;
-      order?: number;
-      sortOrder?: number;
-    }>;
-  };
+type DemandPreviewCard = {
+  identityValues: Record<string, string>;
+  detailsText: string;
+  isCertified: boolean;
+  createdAtIso: string;
 };
 
 export function BuySearchPage() {
   const { api, token } = useAuth();
   const { getOptions } = useOptions();
   const { marketKey, availableMarkets, setMarket } = useMarket();
+  const navigate = useNavigate();
   const [marketFields, setMarketFields] = useState<MarketFieldDefinition[]>([]);
   const [marketDependencies, setMarketDependencies] = useState<MarketDependency[]>([]);
   const [marketCardTemplates, setMarketCardTemplates] = useState<MarketCardTemplates | undefined>(undefined);
@@ -105,6 +78,7 @@ export function BuySearchPage() {
   const [searchRequest, setSearchRequest] = useState<{
     structuredValues: Record<string, string>;
     detailsText: string;
+    certify: boolean;
   } | null>(null);
   const [results, setResults] = useState<BuyCard[]>([]);
   const [page, setPage] = useState(1);
@@ -112,8 +86,10 @@ export function BuySearchPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [isSearchQueued, setIsSearchQueued] = useState(false);
+  const [certifySearch, setCertifySearch] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [demandPreview, setDemandPreview] = useState<DemandPreviewCard | null>(null);
   const [revealState, setRevealState] = useState<
     Record<string, { loading: boolean; whatsappUrl?: string; didConsume?: boolean; error?: string }>
   >({});
@@ -141,8 +117,10 @@ export function BuySearchPage() {
     setResults([]);
     setPage(1);
     setTotal(0);
+    setCertifySearch(false);
     setMessage(null);
     setError(null);
+    setDemandPreview(null);
     setRevealState({});
     optionIdToKeyRef.current = {};
   }, [marketKey]);
@@ -552,6 +530,7 @@ export function BuySearchPage() {
     setLoading(true);
     setError(null);
     setMessage(null);
+    setDemandPreview(null);
 
     const query = buildBuySearchQuery({
       marketKey: marketKey ?? "automotive",
@@ -560,6 +539,7 @@ export function BuySearchPage() {
       detailsText: hasDetailField
         ? searchRequest.structuredValues.detail ?? ""
         : searchRequest.detailsText,
+      certify: searchRequest.certify,
       page,
       pageSize
     });
@@ -585,20 +565,41 @@ export function BuySearchPage() {
         setResults(normalized.results);
         setPageSize(normalized.pageSize);
         setTotal(normalized.total);
+        if (normalized.results.length === 0) {
+          if (
+            normalized.reason !== "ONLY_OWN_LISTINGS" &&
+            normalized.reason !== "WHATSAPP_REQUIRED"
+          ) {
+            const previewIdentityValues = Object.fromEntries(
+              searchFormFields
+                .map((field) => {
+                  const rawValue = searchRequest.structuredValues[field.key] ?? "";
+                  const label =
+                    optionsByFieldKey[field.key]?.find((option) => option.id === rawValue)?.label ??
+                    rawValue;
+                  return [field.key, label] as const;
+                })
+                .filter((entry) => String(entry[1]).trim().length > 0)
+            );
 
-          if (normalized.results.length === 0) {
-            if (normalized.reason === "ONLY_OWN_LISTINGS") {
-              setMessage("No hay resultados porque ya tienes una oferta activa para esta pieza.");
-            } else if (normalized.reason === "WHATSAPP_REQUIRED") {
-              setMessage("Registra tu número de WhatsApp para continuar.");
-            } else if (normalized.demandAction === "updated") {
-            setMessage("La búsqueda fue actualizada.");
-          } else if (normalized.demandAction === "existing") {
-            setMessage("La búsqueda ya existe.");
-            } else {
-            setMessage("No se encontraron resultados por ahora. Su búsqueda ha sido registrada y la plataforma intentará encontrar a alguien que pueda ayudarle.");
-            }
+            setDemandPreview({
+              identityValues: previewIdentityValues,
+              detailsText: hasDetailField
+                ? searchRequest.structuredValues.detail ?? ""
+                : searchRequest.detailsText,
+              isCertified: normalized.isCertified === true,
+              createdAtIso: new Date().toISOString()
+            });
           }
+
+          if (normalized.reason === "ONLY_OWN_LISTINGS") {
+            setMessage("No hay resultados porque ya tienes una oferta activa para esta pieza.");
+          } else if (normalized.reason === "WHATSAPP_REQUIRED") {
+            setMessage("Registra tu n?mero de WhatsApp para continuar.");
+          } else {
+            setMessage(null);
+          }
+        }
       })
       .catch((apiError) => {
         debugLog("search.error", {
@@ -608,7 +609,7 @@ export function BuySearchPage() {
         setError(toUiErrorMessage(apiError));
       })
       .finally(() => setLoading(false));
-  }, [api, searchFormFields, hasDetailField, marketKey, page, searchRequest, pageSize]);
+  }, [api, hasDetailField, marketKey, optionsByFieldKey, page, searchFormFields, searchRequest, pageSize]);
 
   function optionsForField(fieldKey: string): Option[] {
     return optionsByFieldKey[fieldKey] ?? [];
@@ -646,9 +647,7 @@ export function BuySearchPage() {
     });
   }
 
-  function onSearch(event: FormEvent) {
-    event.preventDefault();
-
+  function queueSearch(certify: boolean) {
     if (loading || isSearchQueued) {
       return;
     }
@@ -690,11 +689,17 @@ export function BuySearchPage() {
       setPage(1);
       setSearchRequest({
         structuredValues: { ...sanitizedValues },
-        detailsText: hasDetailField ? sanitizedValues.detail ?? "" : detailsText
+        detailsText: hasDetailField ? sanitizedValues.detail ?? "" : detailsText,
+        certify
       });
       setIsSearchQueued(false);
       searchDebounceRef.current = null;
     }, 300);
+  }
+
+  function onSearch(event: FormEvent) {
+    event.preventDefault();
+    queueSearch(certifySearch);
   }
 
   async function onReveal(listingId: string) {
@@ -819,13 +824,24 @@ export function BuySearchPage() {
           ) : null}
 
           {marketKey && requiredSearchFieldsComplete ? (
-            <button
-              type="submit"
-              className="primary-action-button"
-              disabled={loading || isSearchQueued || !requiredSearchFieldsComplete}
-            >
-              {loading || isSearchQueued ? "Buscando..." : "Buscar"}
-            </button>
+            <div className="stack gap-sm">
+              <label className="auth-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={certifySearch}
+                  onChange={(event) => setCertifySearch(event.target.checked)}
+                  disabled={loading || isSearchQueued}
+                />
+                <span>Certificar búsqueda (1 Token)</span>
+              </label>
+              <button
+                type="submit"
+                className="primary-action-button"
+                disabled={loading || isSearchQueued || !requiredSearchFieldsComplete}
+              >
+                {loading || isSearchQueued ? "Buscando..." : "Buscar"}
+              </button>
+            </div>
           ) : null}
         </form>
       </Card>
@@ -833,9 +849,45 @@ export function BuySearchPage() {
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
       {searched && !loading && results.length === 0 && !message ? (
-        <Card>
-          <p>No hay resultados.</p>
-        </Card>
+        demandPreview ? (
+          <div className="stack gap-sm">
+            {(() => {
+              const cardContent = buildCardContent({
+                intentLabel: "Busco",
+                orderedFields: searchFormFields,
+                values: demandPreview.identityValues,
+                fallbackLabel: "Publicacion",
+                template: marketCardTemplates?.buyDemand,
+                detailsText: demandPreview.detailsText || null
+              });
+
+              return (
+                <article
+                  className={
+                    demandPreview.isCertified
+                      ? "card stack card-elevated demand-card-compact card-with-certification"
+                      : "card stack card-elevated demand-card-compact"
+                  }
+                >
+                  {demandPreview.isCertified ? <CertificationBadge /> : null}
+                  <p>
+                    <strong>{cardContent.title}</strong>
+                  </p>
+                  {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+                  {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
+                  <p>Creado: {formatWhen(demandPreview.createdAtIso)}</p>
+                </article>
+              );
+            })()}
+            <button type="button" className="ghost" onClick={() => navigate("/my-listings")}>
+              Mis listas
+            </button>
+          </div>
+        ) : (
+          <Card>
+            <p>No hay resultados.</p>
+          </Card>
+        )
       ) : null}
 
       {results.map((card) => {
@@ -860,7 +912,11 @@ export function BuySearchPage() {
 
         const reveal = revealState[card.id];
         return (
-          <article key={card.id} className="card stack card-elevated">
+          <article
+            key={card.id}
+            className={card.isCertified ? "card stack card-elevated card-with-certification" : "card stack card-elevated"}
+          >
+            {card.isCertified ? <CertificationBadge /> : null}
             <p>
               <strong>{cardContent.title}</strong>
             </p>

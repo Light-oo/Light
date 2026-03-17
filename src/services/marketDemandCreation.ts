@@ -6,6 +6,12 @@ import { buildIntentionSignature } from "./signatureBuilder";
 import { loadFieldVocabulary } from "./marketVocabulary";
 import { engineOk, type EngineContractResponse } from "./engineContracts";
 import { adaptEngineError, engineValidationFailure } from "./engineErrorAdapter";
+import {
+  consumeSingleTokenPreferringPaid,
+  refundConsumedToken,
+  TokenSpendError,
+  type TokenSpendSource
+} from "./tokenSpending";
 
 type CreateOrReuseOpenMarketDemandInput = {
   accessToken: string;
@@ -13,6 +19,7 @@ type CreateOrReuseOpenMarketDemandInput = {
   marketKey: string;
   payload: Record<string, unknown>;
   detailsText?: string | null;
+  certify?: boolean;
   supabase?: ReturnType<typeof createSupabaseAnon>;
 };
 
@@ -22,6 +29,8 @@ export type CreateOrReuseOpenMarketDemandResult = {
   signature: string;
   normalizedPayload: Record<string, string>;
   action: "created" | "existing" | "updated";
+  isCertified: boolean;
+  certificationAction: "not_requested" | "certified" | "already_certified";
 };
 
 export class MarketDemandCreationError extends Error {
@@ -69,6 +78,10 @@ function toBoolean(value: unknown, defaultValue = false): boolean {
     }
   }
   return defaultValue;
+}
+
+function normalizeDemandCertification(value: unknown) {
+  return value === true || value === "true" || value === 1 || value === "1";
 }
 
 const DETAILS_MAX_LENGTH = 200;
@@ -452,7 +465,7 @@ async function findExistingOpenDemandBySignature(params: {
   for (const scope of scopeCandidates) {
     const { data, error } = await supabase
       .from("demands")
-      .select("id,details_text")
+      .select("id,details_text,is_certified")
       .eq("requester_user_id", userId)
       .eq("status", "open")
       .eq("intention_signature", signature)
@@ -461,7 +474,11 @@ async function findExistingOpenDemandBySignature(params: {
       .maybeSingle();
 
     if (!error) {
-      return data as { id: string; details_text: string | null } | null;
+      return data as {
+        id: string;
+        details_text: string | null;
+        is_certified?: boolean | null;
+      } | null;
     }
     if (isMissingColumnError(error)) {
       missingScopeColumnCount += 1;
@@ -559,6 +576,90 @@ async function updateDetailsIfNeeded(params: {
   return true;
 }
 
+async function updateDemandCertificationState(params: {
+  supabase: ReturnType<typeof createSupabaseAnon>;
+  demandId: string;
+  userId: string;
+  detailsText: string | null;
+  isCertified: boolean;
+}) {
+  const { supabase, demandId, userId, detailsText, isCertified } = params;
+  const patch: Record<string, unknown> = {
+    is_certified: isCertified,
+    updated_at: new Date().toISOString()
+  };
+
+  if (detailsText !== null) {
+    patch.details_text = detailsText;
+  }
+
+  const { data, error } = await supabase
+    .from("demands")
+    .update(patch)
+    .eq("id", demandId)
+    .eq("requester_user_id", userId)
+    .eq("status", "open")
+    .select("id,is_certified")
+    .maybeSingle();
+
+  if (error) {
+    throw new MarketDemandCreationError("update_demand_certification_failed", error.message, 500);
+  }
+
+  if (!data) {
+    throw new MarketDemandCreationError(
+      "update_demand_certification_failed",
+      "Demand was not found.",
+      404
+    );
+  }
+
+  return normalizeDemandCertification((data as Record<string, unknown>).is_certified);
+}
+
+async function certifyDemandWithToken(params: {
+  supabase: ReturnType<typeof createSupabaseAnon>;
+  userId: string;
+  demandId: string;
+  detailsText: string | null;
+}) {
+  const { supabase, userId, demandId, detailsText } = params;
+  let consumedFrom: TokenSpendSource | null = null;
+
+  try {
+    const spendResult = await consumeSingleTokenPreferringPaid({ supabase, userId });
+    consumedFrom = spendResult.source;
+  } catch (error) {
+    if (error instanceof TokenSpendError) {
+      throw new MarketDemandCreationError(error.code, error.message, error.status);
+    }
+    throw error;
+  }
+
+  try {
+    return await updateDemandCertificationState({
+      supabase,
+      demandId,
+      userId,
+      detailsText,
+      isCertified: true
+    });
+  } catch (error) {
+    if (consumedFrom) {
+      try {
+        await refundConsumedToken({ supabase, userId, source: consumedFrom });
+      } catch (refundError: any) {
+        throw new MarketDemandCreationError(
+          "token_refund_failed",
+          `Demand certification failed and token refund also failed: ${String(refundError?.message ?? refundError)}`,
+          500
+        );
+      }
+    }
+    throw error;
+  }
+}
+
 export async function createOrReuseOpenMarketDemand(
   input: CreateOrReuseOpenMarketDemandInput
 ): Promise<CreateOrReuseOpenMarketDemandResult> {
@@ -619,6 +720,7 @@ export async function createOrReuseOpenMarketDemand(
   }
 
   const detailsText = normalizedDetails.value;
+  const certify = input.certify === true;
   const existingBeforeInsert = await findExistingOpenDemandBySignature({
     supabase,
     userId: input.userId,
@@ -627,6 +729,27 @@ export async function createOrReuseOpenMarketDemand(
   });
 
   if (existingBeforeInsert) {
+    const existingIsCertified = normalizeDemandCertification(existingBeforeInsert.is_certified);
+
+    if (certify && !existingIsCertified) {
+      await certifyDemandWithToken({
+        supabase,
+        userId: input.userId,
+        demandId: existingBeforeInsert.id,
+        detailsText
+      });
+
+      return {
+        demandId: existingBeforeInsert.id,
+        marketKey: resolvedMarket.market.key,
+        signature,
+        normalizedPayload: validation.normalizedPayload,
+        action: "updated",
+        isCertified: true,
+        certificationAction: "certified"
+      };
+    }
+
     const didUpdate = await updateDetailsIfNeeded({
       supabase,
       demandId: existingBeforeInsert.id,
@@ -639,7 +762,10 @@ export async function createOrReuseOpenMarketDemand(
       marketKey: resolvedMarket.market.key,
       signature,
       normalizedPayload: validation.normalizedPayload,
-      action: didUpdate ? "updated" : "existing"
+      action: didUpdate ? "updated" : "existing",
+      isCertified: existingIsCertified,
+      certificationAction:
+        certify && existingIsCertified ? "already_certified" : "not_requested"
     };
   }
 
@@ -654,7 +780,8 @@ export async function createOrReuseOpenMarketDemand(
     requester_user_id: input.userId,
     status: "open",
     intention_signature: signature,
-    details_text: detailsText
+    details_text: detailsText,
+    is_certified: certify
   };
 
   for (const field of resolvedMarket.fields) {
@@ -668,6 +795,22 @@ export async function createOrReuseOpenMarketDemand(
       continue;
     }
     demandPayload[column] = selectedId;
+  }
+
+  let consumedFrom: TokenSpendSource | null = null;
+  if (certify) {
+    try {
+      const spendResult = await consumeSingleTokenPreferringPaid({
+        supabase,
+        userId: input.userId
+      });
+      consumedFrom = spendResult.source;
+    } catch (error) {
+      if (error instanceof TokenSpendError) {
+        throw new MarketDemandCreationError(error.code, error.message, error.status);
+      }
+      throw error;
+    }
   }
 
   try {
@@ -688,11 +831,66 @@ export async function createOrReuseOpenMarketDemand(
         resolvedMarket
       });
       if (!existingAfterDuplicate) {
+        if (consumedFrom) {
+          await refundConsumedToken({ supabase, userId: input.userId, source: consumedFrom });
+        }
         throw new MarketDemandCreationError(
           "demand_duplicate_resolve_failed",
           "Duplicate demand detected but existing demand could not be loaded.",
           500
         );
+      }
+
+      const existingIsCertified = normalizeDemandCertification(existingAfterDuplicate.is_certified);
+
+      if (certify) {
+        if (existingIsCertified) {
+          if (consumedFrom) {
+            await refundConsumedToken({ supabase, userId: input.userId, source: consumedFrom });
+          }
+
+          const didUpdate = await updateDetailsIfNeeded({
+            supabase,
+            demandId: existingAfterDuplicate.id,
+            userId: input.userId,
+            detailsText
+          });
+
+          return {
+            demandId: existingAfterDuplicate.id,
+            marketKey: resolvedMarket.market.key,
+            signature,
+            normalizedPayload: validation.normalizedPayload,
+            action: didUpdate ? "updated" : "existing",
+            isCertified: true,
+            certificationAction: "already_certified"
+          };
+        }
+
+        try {
+          await updateDemandCertificationState({
+            supabase,
+            demandId: existingAfterDuplicate.id,
+            userId: input.userId,
+            detailsText,
+            isCertified: true
+          });
+        } catch (updateError) {
+          if (consumedFrom) {
+            await refundConsumedToken({ supabase, userId: input.userId, source: consumedFrom });
+          }
+          throw updateError;
+        }
+
+        return {
+          demandId: existingAfterDuplicate.id,
+          marketKey: resolvedMarket.market.key,
+          signature,
+          normalizedPayload: validation.normalizedPayload,
+          action: "updated",
+          isCertified: true,
+          certificationAction: "certified"
+        };
       }
 
       const didUpdate = await updateDetailsIfNeeded({
@@ -707,8 +905,21 @@ export async function createOrReuseOpenMarketDemand(
         marketKey: resolvedMarket.market.key,
         signature,
         normalizedPayload: validation.normalizedPayload,
-        action: didUpdate ? "updated" : "existing"
+        action: didUpdate ? "updated" : "existing",
+        isCertified: existingIsCertified,
+        certificationAction: "not_requested"
       };
+    }
+    if (consumedFrom) {
+      try {
+        await refundConsumedToken({ supabase, userId: input.userId, source: consumedFrom });
+      } catch (refundError: any) {
+        throw new MarketDemandCreationError(
+          "token_refund_failed",
+          `Demand insert failed and token refund also failed: ${String(refundError?.message ?? refundError)}`,
+          500
+        );
+      }
     }
     throw error;
   }
@@ -733,7 +944,9 @@ export async function createOrReuseOpenMarketDemand(
     marketKey: resolvedMarket.market.key,
     signature,
     normalizedPayload: validation.normalizedPayload,
-    action: "created"
+    action: "created",
+    isCertified: normalizeDemandCertification(createdDemand.is_certified),
+    certificationAction: certify ? "certified" : "not_requested"
   };
 }
 
@@ -744,6 +957,8 @@ export type DemandCreationContractData = {
   action: "created" | "existing" | "updated";
   signature: string;
   normalizedPayload: Record<string, string>;
+  isCertified: boolean;
+  certificationAction: "not_requested" | "certified" | "already_certified";
 };
 
 export async function createOrReuseOpenMarketDemandContract(
@@ -757,7 +972,9 @@ export async function createOrReuseOpenMarketDemandContract(
       demandId: result.demandId,
       action: result.action,
       signature: result.signature,
-      normalizedPayload: result.normalizedPayload
+      normalizedPayload: result.normalizedPayload,
+      isCertified: result.isCertified,
+      certificationAction: result.certificationAction
     });
   } catch (error) {
     if (error instanceof MarketDemandCreationError) {

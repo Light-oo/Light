@@ -135,7 +135,7 @@ export async function findMatchingSellListingsBySignature(
     supabase: input.supabase,
     table: "listings",
     market: input.resolvedMarket.market,
-    selectClause: "id,seller_profile_id,intention_signature,listing_type,status,created_at",
+    selectClause: "id,seller_profile_id,intention_signature,listing_type,status,created_at,is_certified",
     apply: (query) =>
       query
         .eq("listing_type", "sell")
@@ -157,7 +157,7 @@ export async function findMatchingOpenDemandsBySignature(
     supabase: input.supabase,
     table: "demands",
     market: input.resolvedMarket.market,
-    selectClause: "id,requester_user_id,status,intention_signature,created_at,details_text",
+    selectClause: "id,requester_user_id,status,intention_signature,created_at,details_text,is_certified",
     apply: (query) =>
       query
         .eq("status", rule.demandState)

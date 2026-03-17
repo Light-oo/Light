@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { logSystemError } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
 import type { ResolvedMarket, ResolvedMarketField, ResolvedMarketRule } from "./marketResolution";
 import { resolveMarketConfiguration } from "./marketResolution";
@@ -21,6 +22,66 @@ type CreateMarketAwareSellListingInput = {
   };
   supabase?: ReturnType<typeof createSupabaseAnon>;
 };
+
+async function hasActiveSellerMarketCertification(params: {
+  supabase: ReturnType<typeof createSupabaseAnon>;
+  userId: string;
+  resolvedMarket: ResolvedMarket;
+}) {
+  const { supabase, userId, resolvedMarket } = params;
+  const marketCandidates = resolvedMarket.market.id
+    ? [
+        { column: "market_id", value: resolvedMarket.market.id },
+        { column: "market_key", value: resolvedMarket.market.key }
+      ]
+    : [{ column: "market_key", value: resolvedMarket.market.key }];
+  const activeCandidates = [
+    { column: "active", value: true },
+    { column: "status", value: "active" }
+  ];
+  const profileCandidates = ["profile_id", "user_id"];
+  let sawMissingColumn = false;
+
+  for (const profileColumn of profileCandidates) {
+    for (const marketCandidate of marketCandidates) {
+      for (const activeCandidate of activeCandidates) {
+        const { data, error } = await supabase
+          .from("profile_market_certifications")
+          .select("id")
+          .eq(profileColumn, userId)
+          .eq(marketCandidate.column, marketCandidate.value)
+          .eq(activeCandidate.column, activeCandidate.value as any)
+          .limit(1)
+          .maybeSingle();
+
+        if (!error) {
+          return Boolean(data);
+        }
+
+        if (isMissingColumnError(error)) {
+          sawMissingColumn = true;
+          continue;
+        }
+
+        throw new MarketListingCreationError(
+          "listing_certification_lookup_failed",
+          `Listing certification lookup failed: ${error.message}`,
+          500
+        );
+      }
+    }
+  }
+
+  if (sawMissingColumn) {
+    throw new MarketListingCreationError(
+      "listing_certification_lookup_failed",
+      "profile_market_certifications does not expose the expected profile/market activity columns.",
+      500
+    );
+  }
+
+  return false;
+}
 
 export class MarketListingCreationError extends Error {
   code: string;
@@ -569,7 +630,7 @@ async function cleanupPartialListingInsert(params: {
     }
     const { error } = await query;
     if (error) {
-      console.error("partial_listing_cleanup_error", {
+      logSystemError("partial_listing_cleanup_error", {
         table,
         listingId,
         code: error.code,
@@ -838,6 +899,12 @@ export async function createMarketAwareSellListing(input: CreateMarketAwareSellL
     throw new MarketListingCreationError("duplicate_listing", "duplicate_listing", 409);
   }
 
+  const isCertified = await hasActiveSellerMarketCertification({
+    supabase,
+    userId: input.userId,
+    resolvedMarket
+  });
+
   const listingId = randomUUID();
   let listingInserted = false;
   try {
@@ -849,7 +916,8 @@ export async function createMarketAwareSellListing(input: CreateMarketAwareSellL
         listing_type: "sell",
         status: "active",
         seller_profile_id: input.userId,
-        intention_signature: signature
+        intention_signature: signature,
+        is_certified: isCertified
       }
     });
     listingInserted = true;
@@ -950,7 +1018,8 @@ export async function createMarketAwareSellListing(input: CreateMarketAwareSellL
     listingId,
     marketKey: resolvedMarket.market.key,
     signature,
-    normalizedPayload: validation.normalizedPayload
+    normalizedPayload: validation.normalizedPayload,
+    isCertified
   };
 }
 
@@ -961,6 +1030,7 @@ export type ListingCreationContractData = {
   action: "created";
   signature: string;
   normalizedPayload: Record<string, string>;
+  isCertified: boolean;
 };
 
 export async function createMarketAwareSellListingContract(
@@ -974,7 +1044,8 @@ export async function createMarketAwareSellListingContract(
       listingId: created.listingId,
       action: "created",
       signature: created.signature,
-      normalizedPayload: created.normalizedPayload
+      normalizedPayload: created.normalizedPayload,
+      isCertified: created.isCertified
     });
   } catch (error) {
     if (error instanceof MarketListingCreationError) {

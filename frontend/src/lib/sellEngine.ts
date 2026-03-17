@@ -105,7 +105,8 @@ export function normalizeSellPublishResponse(payload: unknown) {
 
   if (typeof row?.data?.listingId === "string" && row.data.listingId.trim().length > 0) {
     return {
-      listingId: row.data.listingId
+      listingId: row.data.listingId,
+      isCertified: row.data.isCertified === true
     };
   }
 
@@ -115,7 +116,8 @@ export function normalizeSellPublishResponse(payload: unknown) {
     row.data.listingId.trim().length > 0
   ) {
     return {
-      listingId: row.data.listingId
+      listingId: row.data.listingId,
+      isCertified: row.data.isCertified === true
     };
   }
 

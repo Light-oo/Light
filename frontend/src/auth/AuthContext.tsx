@@ -26,6 +26,26 @@ type AuthContextValue = AuthState & {
 
 const STORAGE_KEY = "light_pilot_jwt";
 
+function getStoredToken() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const sessionToken = sessionStorage.getItem(STORAGE_KEY);
+  if (sessionToken) {
+    return sessionToken;
+  }
+
+  const legacyToken = localStorage.getItem(STORAGE_KEY);
+  if (!legacyToken) {
+    return null;
+  }
+
+  sessionStorage.setItem(STORAGE_KEY, legacyToken);
+  localStorage.removeItem(STORAGE_KEY);
+  return legacyToken;
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 async function validateToken(apiBaseUrl: string, token: string): Promise<string | null> {
@@ -66,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(() => {
     tokenRef.current = null;
+    sessionStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(STORAGE_KEY);
     setState({ ready: true, token: null, userId: null, email: null });
   }, []);
@@ -92,7 +113,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       tokenRef.current = token;
-      localStorage.setItem(STORAGE_KEY, token);
+      sessionStorage.setItem(STORAGE_KEY, token);
+      localStorage.removeItem(STORAGE_KEY);
       setState({
         ready: true,
         token,
@@ -143,7 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [api, establishSession]);
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = getStoredToken();
     if (!stored) {
       setState({ ready: true, token: null, userId: null, email: null });
       return;

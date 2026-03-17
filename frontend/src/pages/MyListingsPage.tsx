@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
+import { CertificationBadge } from "../components/CertificationBadge";
 import { ApiError } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
+import type { MarketDefinitionResponse } from "../lib/marketDefinition";
 import {
   buildCardContent,
   parseSignatureIdentityValues
@@ -20,6 +22,7 @@ type MyListingRow = {
   marketKey: string;
   identityValues: IdentityValueMap;
   signature: string;
+  isCertified?: boolean;
   status: "active" | "inactive" | string;
   created_at: string | null;
   price?: {
@@ -38,6 +41,7 @@ type MyDemandRow = {
   marketKey: string;
   identityValues: IdentityValueMap;
   signature: string;
+  isCertified?: boolean;
   status: "open" | "inactive" | "closed" | "cancelled" | string;
   created_at: string | null;
   request?: {
@@ -53,32 +57,6 @@ type MyListingsResponse = {
 type MyDemandsResponse = {
   ok: true;
   data: MyDemandRow[];
-};
-
-type MarketDefinitionResponse = {
-  ok: true;
-  data: {
-    cardTemplates?: MarketCardTemplates;
-    fields: Array<{
-      key: string;
-      label?: string;
-      label_es?: string;
-      required?: boolean;
-      requiredInBuy?: boolean;
-      required_in_buy?: boolean;
-      requiredInSell?: boolean;
-      required_in_sell?: boolean;
-      order?: number;
-      sortOrder?: number;
-      type?: string | null;
-      inputType?: string;
-      input_type?: string;
-      allowedInBuy?: boolean;
-      allowed_in_buy?: boolean;
-      allowedInSell?: boolean;
-      allowed_in_sell?: boolean;
-    }>;
-  };
 };
 
 type MarketFieldsByKey = Record<
@@ -232,7 +210,11 @@ function ListingGroup({
             });
 
             return (
-              <article key={row.id} className="card stack listing-row">
+              <article
+                key={row.id}
+                className={row.isCertified ? "card stack listing-row card-with-certification" : "card stack listing-row"}
+              >
+                {row.isCertified ? <CertificationBadge /> : null}
                 <p>
                   <strong>{cardContent.title}</strong>
                 </p>
@@ -303,7 +285,11 @@ function DemandGroup({
             const isActive = row.status === "open";
 
             return (
-              <article key={row.id} className="card stack listing-row">
+              <article
+                key={row.id}
+                className={row.isCertified ? "card stack listing-row card-with-certification" : "card stack listing-row"}
+              >
+                {row.isCertified ? <CertificationBadge /> : null}
                 <p>
                   <strong>{cardContent.title}</strong>
                 </p>

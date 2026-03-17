@@ -781,6 +781,48 @@ small {
   line-height: 1.2;
 }
 
+.card-with-certification {
+  position: relative;
+}
+
+.certification-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(-0.35rem, 0.35rem);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+}
+
+.certification-badge-icon {
+  width: 28px;
+  height: 28px;
+  display: block;
+  filter: none;
+}
+
+.certification-tooltip {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #000;
+  color: #fff;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  z-index: 5;
+}
+
 .demand-refine-button {
   width: 100%;
   text-align: center;

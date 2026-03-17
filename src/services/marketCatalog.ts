@@ -29,36 +29,59 @@ type MarketCardTemplates = {
 
 const ACTIVE_COLUMNS = ["active", "is_active", "enabled", "is_enabled", "status"] as const;
 
-function getMarketCardTemplates(marketKey: string): MarketCardTemplates | undefined {
-  const normalizedMarketKey = marketKey.trim().toLowerCase();
+function mapCardType(value: unknown) {
+  const normalized = toStringOrNull(value)?.trim().toLowerCase();
+  if (normalized === "buy_demand") {
+    return "buyDemand" as const;
+  }
+  if (normalized === "sell_listing") {
+    return "sellListing" as const;
+  }
+  return null;
+}
 
-  if (normalizedMarketKey === "automotive") {
-    return {
-      buyDemand: {
-        titleTemplate: "Busco {part}",
-        subtitleTemplate: "{brand} {model} {year}"
-      },
-      sellListing: {
-        titleTemplate: "Vendo {part}",
-        subtitleTemplate: "{brand} {model} {year}"
-      }
+async function loadMarketCardTemplates(params: {
+  supabase: SupabaseLike;
+  marketId: string | null;
+}) {
+  if (!params.marketId) {
+    return undefined;
+  }
+
+  const scopedClient =
+    typeof (params.supabase as any).schema === "function"
+      ? (params.supabase as any).schema("public")
+      : params.supabase;
+
+  const { data, error } = await scopedClient
+    .from("market_card_templates")
+    .select("card_type,title_template,subtitle_template")
+    .eq("market_id", params.marketId)
+    .eq("active", true);
+
+  if (error) {
+    throw new MarketResolutionError(
+      "MARKET_CARD_TEMPLATES_QUERY_FAILED",
+      `Failed loading market card templates: ${error.message}`,
+      500
+    );
+  }
+
+  const templates: MarketCardTemplates = {};
+  for (const row of (data ?? []) as RawRecord[]) {
+    const mappedCardType = mapCardType(row.card_type);
+    const titleTemplate = toStringOrNull(row.title_template);
+    if (!mappedCardType || !titleTemplate) {
+      continue;
+    }
+
+    templates[mappedCardType] = {
+      titleTemplate,
+      subtitleTemplate: toStringOrNull(row.subtitle_template) ?? undefined
     };
   }
 
-  if (normalizedMarketKey === "home_services") {
-    return {
-      buyDemand: {
-        titleTemplate: "Busco servicios de {trade}",
-        subtitleTemplate: "{experience}"
-      },
-      sellListing: {
-        titleTemplate: "Ofrezco servicios de {trade}",
-        subtitleTemplate: "{experience}"
-      }
-    };
-  }
-
-  return undefined;
+  return Object.keys(templates).length > 0 ? templates : undefined;
 }
 
 function toStringOrNull(value: unknown): string | null {
@@ -337,6 +360,10 @@ export async function getMarketDefinition(params: {
   const resolved = await resolveMarketConfiguration(params.marketKey, {
     supabase: params.supabase as any
   });
+  const cardTemplates = await loadMarketCardTemplates({
+    supabase: params.supabase,
+    marketId: resolved.market.id
+  });
 
   return {
     market: {
@@ -345,7 +372,7 @@ export async function getMarketDefinition(params: {
       label: resolved.market.label,
       active: resolved.market.active
     },
-    cardTemplates: getMarketCardTemplates(resolved.market.key),
+    cardTemplates,
     fields: resolved.fields.map((field) => {
       const ruleMap = getFieldRuleMap(resolved, field.key);
       const inputType =

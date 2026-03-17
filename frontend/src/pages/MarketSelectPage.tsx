@@ -4,17 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
 import { useMarket } from "../context/MarketContext";
 import { toUiErrorMessage } from "../lib/errorMessages";
-
-type MarketDefinitionResponse = {
-  ok: true;
-  data: {
-    market: {
-      key: string;
-      label: string;
-      active: boolean;
-    };
-  };
-};
+import type { MarketDefinitionResponse } from "../lib/marketDefinition";
 
 type LocationState = {
   from?: string;

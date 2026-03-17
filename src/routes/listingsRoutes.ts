@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
-import { logWarn } from "../lib/logger";
+import { logSystemError, logWarn } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
 import { requireWhatsappNumber } from "../services/profileStatus";
 import {
@@ -37,7 +37,7 @@ const statusBodySchema = z.object({
 }).strict();
 
 function logDbError(step: string, error: any) {
-  console.error("listings_step_error", {
+  logSystemError("listings_step_error", {
     step,
     code: error?.code,
     constraint: error?.constraint,
@@ -120,7 +120,10 @@ router.post("/listings", requireAuth, async (req, res, next) => {
 
     return res.status(201).json({
       ok: true,
-      data: { listingId: result.listingId }
+      data: {
+        listingId: result.listingId,
+        isCertified: result.isCertified
+      }
     });
   } catch (error) {
     if (error instanceof MarketListingCreationError) {

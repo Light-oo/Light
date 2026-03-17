@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
+import { logError, logSystemError } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
 import {
   getAvailableMarketsContract,
@@ -103,7 +104,7 @@ router.get("/catalog/markets/:marketKey/fields/:fieldKey/options", requireAuth, 
   });
 
   if (!response.ok) {
-    console.error("catalog_market_field_options_error", {
+    logError(req, "catalog_market_field_options_error", {
       marketKey: parsedParams.marketKey,
       fieldKey: parsedParams.fieldKey,
       selectedValues,
@@ -164,7 +165,12 @@ router.get("/catalog/departments", async (req, res) => {
       .order("id", { ascending: true });
 
     if (error) {
-      console.error("catalog/departments error", error);
+      logSystemError("catalog_departments_error", {
+        code: (error as any)?.code,
+        message: (error as any)?.message,
+        details: (error as any)?.details,
+        hint: (error as any)?.hint
+      });
       return res.status(500).json({ ok: false, error: "unexpected_error" });
     }
 
@@ -181,7 +187,10 @@ router.get("/catalog/departments", async (req, res) => {
       }
     });
   } catch (err) {
-    console.error("catalog/departments exception", err);
+    logSystemError("catalog_departments_exception", {
+      message: (err as any)?.message,
+      stack: (err as any)?.stack
+    });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 });

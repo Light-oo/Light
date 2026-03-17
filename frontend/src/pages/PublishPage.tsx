@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Card } from "../components/Card";
+import { CertificationBadge } from "../components/CertificationBadge";
 import { FilterSelect } from "../components/FilterSelect";
 import { PriceInput } from "../components/PriceInput";
 import { useMarket } from "../context/MarketContext";
@@ -9,6 +10,7 @@ import { useOptions } from "../context/OptionsContext";
 import { useProfileStatus } from "../context/ProfileStatusContext";
 import { debugLog } from "../lib/debug";
 import { toUiErrorMessage } from "../lib/errorMessages";
+import type { MarketDefinitionResponse } from "../lib/marketDefinition";
 import {
   buildCardContent,
   formatMarketListingIdentity,
@@ -40,45 +42,7 @@ type PublishSuccessCard = {
   secondaryLine?: string | null;
   metaLine?: string | null;
   createdAtIso: string;
-};
-
-type MarketDefinitionResponse = {
-  ok: true;
-  data: {
-    market: {
-      key: string;
-      label: string;
-      active: boolean;
-    };
-    cardTemplates?: MarketCardTemplates;
-    fields: Array<{
-      key: string;
-      label?: string;
-      label_es?: string;
-      required?: boolean;
-      requiredInBuy?: boolean;
-      required_in_buy?: boolean;
-      requiredInSell?: boolean;
-      required_in_sell?: boolean;
-      order?: number;
-      sortOrder?: number;
-      type?: string | null;
-      inputType?: string;
-      input_type?: string;
-      allowedInBuy?: boolean;
-      allowed_in_buy?: boolean;
-      allowedInSell?: boolean;
-      allowed_in_sell?: boolean;
-    }>;
-    dependencies?: Array<{
-      fieldKey?: string;
-      field_key?: string;
-      dependsOnFieldKey?: string;
-      depends_on_field_key?: string;
-      order?: number;
-      sortOrder?: number;
-    }>;
-  };
+  isCertified: boolean;
 };
 
 type RepublishPrefillState = {
@@ -836,7 +800,8 @@ export function PublishPage() {
         metaLine:
           successContent.metaLine ??
           (!marketCardTemplates?.sellListing && requiresPrice ? buildSuccessPriceLine() : null),
-        createdAtIso: new Date().toISOString()
+        createdAtIso: new Date().toISOString(),
+        isCertified: normalized.isCertified
       };
       setSuccessCard(nextSuccessCard);
       setStructuredValues({});
@@ -977,8 +942,9 @@ export function PublishPage() {
 
       {successCard ? (
         <div className="stack gap-sm">
-          <article className="card stack card-elevated demand-card-compact">
-            <p><strong>{successCard.title}</strong></p>
+            <article className={successCard.isCertified ? "card stack card-elevated demand-card-compact card-with-certification" : "card stack card-elevated demand-card-compact"}>
+              {successCard.isCertified ? <CertificationBadge /> : null}
+              <p><strong>{successCard.title}</strong></p>
             {successCard.secondaryLine ? <p>{successCard.secondaryLine}</p> : null}
             {successCard.metaLine ? <p>{successCard.metaLine}</p> : null}
             <p>Creado: {formatWhen(successCard.createdAtIso)}</p>

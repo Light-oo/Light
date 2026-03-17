@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
+import { logError } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
 import { resolveMarketConfiguration, type ResolvedMarket } from "../services/marketResolution";
-import { loadFieldVocabulary, type VocabularyOption } from "../services/marketVocabulary";
+import { parseSignatureValues, resolveDisplayIdentityValues } from "../utils/marketIdentity";
 
 const router = Router();
 
@@ -24,6 +25,7 @@ type ListingSummaryRow = {
   marketKey: string;
   identityValues: Record<string, string>;
   signature: string;
+  isCertified: boolean;
   status: string;
   created_at: string | null;
   price: {
@@ -42,6 +44,7 @@ type DemandSummaryRow = {
   marketKey: string;
   identityValues: Record<string, string>;
   signature: string;
+  isCertified: boolean;
   status: string;
   created_at: string | null;
   request: {
@@ -115,43 +118,12 @@ async function buildMarketKeyByIdMap(
   return map;
 }
 
-function parseSignatureValues(signature: unknown): Record<string, string> {
-  const text = normalizeText(signature);
-  if (!text.includes("|")) {
-    return {};
-  }
-
-  const parts = text.split("|").slice(1);
-  const values: Record<string, string> = {};
-  for (const part of parts) {
-    const separatorIndex = part.indexOf("=");
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    const key = part.slice(0, separatorIndex).trim().toLowerCase();
-    const value = part.slice(separatorIndex + 1).trim();
-    if (!key || !value) {
-      continue;
-    }
-    values[key] = value;
-  }
-  return values;
-}
-
 function extractRecord(value: unknown): Record<string, unknown> | null {
   if (Array.isArray(value)) {
     const first = value[0];
     return first && typeof first === "object" ? (first as Record<string, unknown>) : null;
   }
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function dependencySignature(values: Record<string, string>) {
-  return Object.entries(values)
-    .filter(([, value]) => value.trim().length > 0)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${value}`)
-    .join("&");
 }
 
 async function buildResolvedMarketMap(
@@ -166,71 +138,6 @@ async function buildResolvedMarketMap(
     })
   );
   return new Map<string, ResolvedMarket>(entries);
-}
-
-async function resolveDisplayIdentityValues(
-  supabase: ReturnType<typeof createSupabaseAnon>,
-  resolvedMarket: ResolvedMarket,
-  identityValues: Record<string, string>
-) {
-  const displayIdentityValues: Record<string, string> = {};
-  const dependencyMap = new Map<string, string[]>();
-  const vocabularyCache = new Map<string, VocabularyOption[]>();
-
-  for (const dependency of resolvedMarket.dependencies) {
-    const childKey = normalizeText(dependency.fieldKey).toLowerCase();
-    const parentKey = normalizeText(dependency.dependsOnFieldKey).toLowerCase();
-    if (!childKey || !parentKey) {
-      continue;
-    }
-    const current = dependencyMap.get(childKey) ?? [];
-    if (!current.includes(parentKey)) {
-      current.push(parentKey);
-      dependencyMap.set(childKey, current);
-    }
-  }
-
-  for (const field of resolvedMarket.fields) {
-    const fieldKey = field.key.toLowerCase();
-    const rawValue = identityValues[fieldKey];
-    if (!rawValue) {
-      continue;
-    }
-
-    const dependsOn = dependencyMap.get(fieldKey) ?? [];
-    const selectedValues: Record<string, string> = {};
-    for (const parentKey of dependsOn) {
-      const parentValue = identityValues[parentKey];
-      if (parentValue) {
-        selectedValues[parentKey] = parentValue;
-      }
-    }
-
-    const cacheKey = `${resolvedMarket.market.key}::${fieldKey}::${dependencySignature(selectedValues)}`;
-    let options = vocabularyCache.get(cacheKey);
-    if (!options) {
-      try {
-        const vocabulary = await loadFieldVocabulary({
-          marketKey: resolvedMarket.market.key,
-          fieldKey,
-          selectedValues,
-          resolvedMarket,
-          supabase: supabase as any
-        });
-        options = vocabulary.options;
-      } catch {
-        options = [];
-      }
-      vocabularyCache.set(cacheKey, options);
-    }
-
-    const match = options.find(
-      (option) => option.key.toLowerCase() === rawValue.toLowerCase() || option.id === rawValue
-    );
-    displayIdentityValues[fieldKey] = match?.label ?? rawValue;
-  }
-
-  return displayIdentityValues;
 }
 
 async function buildListingSummaries(
@@ -254,7 +161,7 @@ async function buildListingSummaries(
       const identityValues = parseSignatureValues(signature);
       const resolvedMarket = resolvedMarketByKey.get(marketKey);
       const displayIdentityValues = resolvedMarket
-        ? await resolveDisplayIdentityValues(supabase, resolvedMarket, identityValues)
+        ? await resolveDisplayIdentityValues({ supabase: supabase as any, resolvedMarket, identityValues })
         : identityValues;
       const pricing = extractRecord((row as any).pricing);
       const location = extractRecord((row as any).listing_locations);
@@ -264,6 +171,7 @@ async function buildListingSummaries(
         marketKey,
         identityValues: displayIdentityValues,
         signature,
+        isCertified: Boolean((row as any).is_certified),
         status: normalizeText((row as any).status),
         created_at: normalizeNullableText((row as any).created_at),
         price: {
@@ -301,7 +209,7 @@ async function buildDemandSummaries(
       const identityValues = parseSignatureValues(signature);
       const resolvedMarket = resolvedMarketByKey.get(marketKey);
       const displayIdentityValues = resolvedMarket
-        ? await resolveDisplayIdentityValues(supabase, resolvedMarket, identityValues)
+        ? await resolveDisplayIdentityValues({ supabase: supabase as any, resolvedMarket, identityValues })
         : identityValues;
 
       return {
@@ -309,6 +217,7 @@ async function buildDemandSummaries(
         marketKey,
         identityValues: displayIdentityValues,
         signature,
+        isCertified: Boolean((row as any).is_certified),
         status: normalizeText((row as any).status),
         created_at: normalizeNullableText((row as any).created_at),
         request: {
@@ -344,7 +253,7 @@ router.patch("/api/me", requireAuth, async (req, res, next) => {
     .maybeSingle();
 
   if (error) {
-    console.error("supabase_error", { code: error.code, message: error.message });
+    logError(req, "me_profile_update_error", { code: error.code, message: error.message });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
@@ -368,14 +277,14 @@ router.get("/api/me/listings", requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from("listings")
     .select(
-      "id,market_id,status,created_at,intention_signature,pricing(price_amount,price_type,currency),listing_locations(department,municipality)"
+      "id,market_id,is_certified,status,created_at,intention_signature,pricing(price_amount,price_type,currency),listing_locations(department,municipality)"
     )
     .eq("seller_profile_id", userId)
     .eq("listing_type", "sell")
     .order("created_at", { ascending: false });
 
   if (error) {
-    console.error("supabase_error", { code: error.code, message: error.message });
+    logError(req, "me_listings_query_error", { code: error.code, message: error.message });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
@@ -383,7 +292,7 @@ router.get("/api/me/listings", requireAuth, async (req, res) => {
     const rows = await buildListingSummaries(supabase, (data ?? []) as Array<Record<string, unknown>>);
     return res.json({ ok: true, data: rows });
   } catch (summaryError: any) {
-    console.error("my_listings_summary_error", {
+    logError(req, "my_listings_summary_error", {
       code: summaryError?.code,
       message: summaryError?.message
     });
@@ -403,7 +312,7 @@ router.get("/api/me/buy-demands", requireAuth, async (req, res) => {
     .order("created_at", { ascending: false });
 
   if (error) {
-    console.error("supabase_error", { code: error.code, message: error.message });
+    logError(req, "me_demands_query_error", { code: error.code, message: error.message });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
@@ -411,7 +320,7 @@ router.get("/api/me/buy-demands", requireAuth, async (req, res) => {
     const rows = await buildDemandSummaries(supabase, (data ?? []) as Array<Record<string, unknown>>);
     return res.json({ ok: true, data: rows });
   } catch (summaryError: any) {
-    console.error("my_demands_summary_error", {
+    logError(req, "my_demands_summary_error", {
       code: summaryError?.code,
       message: summaryError?.message
     });
@@ -443,7 +352,7 @@ router.patch("/api/me/buy-demands/:id/status", requireAuth, async (req, res, nex
     .maybeSingle();
 
   if (error) {
-    console.error("supabase_error", { code: error.code, message: error.message });
+    logError(req, "me_demand_status_update_error", { code: error.code, message: error.message });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
@@ -481,7 +390,7 @@ router.delete("/api/me/buy-demands/:id", requireAuth, async (req, res, next) => 
     .maybeSingle();
 
   if (error) {
-    console.error("supabase_error", { code: error.code, message: error.message });
+    logError(req, "me_demand_delete_error", { code: error.code, message: error.message });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 

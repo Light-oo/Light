@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth";
+import { logError, logWarn } from "../lib/logger";
 import { createSupabaseAnon, createSupabaseServiceRole } from "../lib/supabase";
 import { requireWhatsappNumber } from "../services/profileStatus";
 import { resolveMarketConfiguration, type ResolvedMarket } from "../services/marketResolution";
@@ -12,6 +13,10 @@ import {
   createOrReuseOpenMarketDemand,
   MarketDemandCreationError
 } from "../services/marketDemandCreation";
+import {
+  buildIdentityValuesFromRow,
+  parseSignatureValues
+} from "../utils/marketIdentity";
 
 const router = Router();
 
@@ -25,6 +30,9 @@ const listingsQuerySchema = z
     mode: z.union([z.literal("BUY"), z.literal("SELL")]),
     marketKey: z.string().trim().min(1),
     detailsText: z.string().max(200).optional(),
+    certify: z
+      .union([z.literal("true"), z.literal("false"), z.literal("1"), z.literal("0")])
+      .optional(),
     ...paginationQuerySchema
   })
   .passthrough();
@@ -143,7 +151,7 @@ function extractMarketPayloadFromQuery(
   query: Record<string, unknown>,
   resolvedMarket: ResolvedMarket
 ) {
-  const reservedKeys = new Set(["mode", "marketkey", "detailstext", "page", "pagesize"]);
+  const reservedKeys = new Set(["mode", "marketkey", "detailstext", "page", "pagesize", "certify"]);
   const fieldKeys = new Set(resolvedMarket.fields.map((field) => field.key.toLowerCase()));
   const payload: Record<string, string> = {};
   const issues: Array<{ path: string; code: string; message: string }> = [];
@@ -170,84 +178,6 @@ function extractMarketPayloadFromQuery(
   }
 
   return { payload, issues };
-}
-
-function parseSignatureValues(signature: unknown): Record<string, string> {
-  const text = normalizeText(signature);
-  if (!text.includes("|")) {
-    return {};
-  }
-
-  const parts = text.split("|").slice(1);
-  const values: Record<string, string> = {};
-  for (const part of parts) {
-    const separatorIndex = part.indexOf("=");
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    const key = part.slice(0, separatorIndex).trim().toLowerCase();
-    const value = part.slice(separatorIndex + 1).trim();
-    if (!key || !value) {
-      continue;
-    }
-    values[key] = value;
-  }
-  return values;
-}
-
-function snakeToCamel(value: string) {
-  return value.replace(/_([a-z])/g, (_match, char: string) => char.toUpperCase());
-}
-
-function resolveIdentityValue(
-  row: Record<string, unknown>,
-  fieldKey: string,
-  signatureValues: Record<string, string>
-) {
-  const normalizedKey = fieldKey.toLowerCase();
-  const camel = snakeToCamel(normalizedKey);
-  const candidates = [
-    row[`${normalizedKey}_label_es`],
-    row[`${camel}LabelEs`],
-    row[`${normalizedKey}_label`],
-    row[`${camel}Label`],
-    row[normalizedKey],
-    row[camel],
-    signatureValues[normalizedKey]
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate === undefined || candidate === null) {
-      continue;
-    }
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-      return String(candidate);
-    }
-    if (typeof candidate === "string") {
-      const value = candidate.trim();
-      if (value.length > 0) {
-        return value;
-      }
-    }
-  }
-
-  return null;
-}
-
-function buildIdentityValuesFromRow(
-  row: Record<string, unknown>,
-  resolvedMarket: ResolvedMarket,
-  signatureValues: Record<string, string>
-) {
-  const identityValues: Record<string, string> = {};
-  for (const field of resolvedMarket.fields) {
-    const key = field.key.toLowerCase();
-    const value = resolveIdentityValue(row, key, signatureValues);
-    if (value) {
-      identityValues[key] = value;
-    }
-  }
-  return identityValues;
 }
 
 function sendErrorResponse(params: {
@@ -310,7 +240,7 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
         marketKey
       });
     }
-    console.error("search_demands_market_resolution_error", {
+    logError(req, "search_demands_market_resolution_error", {
       marketKey,
       code: error?.code,
       message: error?.message
@@ -376,8 +306,7 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
       : { data: [], error: null };
 
   if (demandRowsError) {
-    console.error("supabase_error", {
-      route: "GET /search/demands",
+    logError(req, "search_demands_rows_lookup_error", {
       requesterUserId,
       code: demandRowsError.code,
       message: demandRowsError.message,
@@ -410,7 +339,7 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
       )
     );
   } catch (departmentError: any) {
-    console.warn("search_demands_department_lookup_error", {
+    logWarn(req, "search_demands_department_lookup_error", {
       code: departmentError?.code,
       message: departmentError?.message
     });
@@ -432,6 +361,7 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
       marketKey: resolvedMarket.market.key,
       identityValues,
       signature: normalizeText((fullRow as any)?.intention_signature),
+      isCertified: Boolean((fullRow as any)?.is_certified),
       status: normalizeText((fullRow as any)?.status),
       created_at: (fullRow as any)?.created_at,
       type: "buy",
@@ -499,7 +429,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         marketKey
       });
     }
-    console.error("search_market_resolution_error", {
+    logError(req, "search_market_resolution_error", {
       marketKey,
       code: error?.code,
       message: error?.message
@@ -566,7 +496,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         : { data: [], error: null };
 
     if (demandRowsError) {
-      console.error("search_sell_demands_lookup_error", {
+      logError(req, "search_sell_demands_lookup_error", {
         code: demandRowsError.code,
         message: demandRowsError.message
       });
@@ -596,7 +526,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         )
       );
     } catch (departmentError: any) {
-      console.warn("search_sell_mode_department_lookup_error", {
+      logWarn(req, "search_sell_mode_department_lookup_error", {
         code: departmentError?.code,
         message: departmentError?.message
       });
@@ -618,6 +548,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         marketKey: resolvedMarket.market.key,
         identityValues,
         signature: normalizeText((fullRow as any)?.intention_signature),
+        isCertified: Boolean((fullRow as any)?.is_certified),
         status: normalizeText((fullRow as any)?.status),
         created_at: (fullRow as any)?.created_at,
         type: "buy",
@@ -636,11 +567,13 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
 
     return res.json({
       ok: true,
-      marketKey: resolvedMarket.market.key,
-      results,
-      page,
-      pageSize,
-      total: sellSearch.total
+      data: {
+        marketKey: resolvedMarket.market.key,
+        results,
+        page,
+        pageSize,
+        total: sellSearch.total
+      }
     });
   }
 
@@ -682,7 +615,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
       : { data: [], error: null };
 
   if (buyRowsError) {
-    console.error("search_buy_cards_lookup_error", {
+    logError(req, "search_buy_cards_lookup_error", {
       code: buyRowsError.code,
       message: buyRowsError.message
     });
@@ -719,7 +652,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
       uniqueNonEmpty(Object.values(listingOwnerByListingId))
     );
   } catch (departmentError: any) {
-    console.warn("search_buy_mode_department_lookup_error", {
+    logWarn(req, "search_buy_mode_department_lookup_error", {
       code: departmentError?.code,
       message: departmentError?.message
     });
@@ -748,6 +681,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
       marketKey: resolvedMarket.market.key,
       identityValues,
       signature: normalizeText((cardRow as any)?.intention_signature ?? (resultRow as any)?.intention_signature),
+      isCertified: Boolean((cardRow as any)?.is_certified ?? (resultRow as any)?.is_certified),
       status: normalizeText((cardRow as any)?.status ?? (resultRow as any)?.status),
       created_at:
         normalizeText((cardRow as any)?.created_at) ||
@@ -775,20 +709,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
 
   if (results.length === 0) {
     let ownListingExists = false;
-    const ownQueryByMarketKey = await supabase
-      .from("listings")
-      .select("id")
-      .eq("listing_type", "sell")
-      .eq("status", "active")
-      .eq("seller_profile_id", requesterUserId)
-      .eq("intention_signature", buySearch.signature)
-      .eq("market_key", resolvedMarket.market.key)
-      .limit(1)
-      .maybeSingle();
-
-    if (!ownQueryByMarketKey.error && ownQueryByMarketKey.data) {
-      ownListingExists = true;
-    } else if (resolvedMarket.market.id) {
+    if (resolvedMarket.market.id) {
       const ownQueryByMarketId = await supabase
         .from("listings")
         .select("id")
@@ -805,12 +726,12 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
     if (ownListingExists) {
       return res.json({
         ok: true,
-        marketKey: resolvedMarket.market.key,
-        results,
-        page,
-        pageSize,
-        total: 0,
         data: {
+          marketKey: resolvedMarket.market.key,
+          results,
+          page,
+          pageSize,
+          total: 0,
           reason: "ONLY_OWN_LISTINGS"
         }
       });
@@ -822,17 +743,17 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
       if (String(whatsappGuardError?.code ?? "") === "WHATSAPP_REQUIRED") {
         return res.json({
           ok: true,
-          marketKey: resolvedMarket.market.key,
-          results,
-          page,
-          pageSize,
-          total: 0,
           data: {
+            marketKey: resolvedMarket.market.key,
+            results,
+            page,
+            pageSize,
+            total: 0,
             reason: "WHATSAPP_REQUIRED"
           }
         });
       }
-      console.error("supabase_error", {
+      logError(req, "search_whatsapp_guard_error", {
         code: whatsappGuardError?.code,
         message: whatsappGuardError?.message
       });
@@ -852,15 +773,28 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         marketKey: resolvedMarket.market.key,
         payload: buySearch.normalizedPayload,
         detailsText: parsed.detailsText,
+        certify: parsed.certify === "true" || parsed.certify === "1",
         supabase
       });
 
       zeroResultsData = {
         ...(zeroResultsData ?? {}),
-        demandAction: demandResult.action
+        demandAction: demandResult.action,
+        demandId: demandResult.demandId,
+        isCertified: demandResult.isCertified,
+        certificationAction: demandResult.certificationAction
       };
     } catch (error) {
       if (error instanceof MarketDemandCreationError) {
+        if (error.status === 402 && error.code === "insufficient_tokens") {
+          return sendErrorResponse({
+            res,
+            status: 402,
+            error: "insufficient_tokens",
+            message: "Insufficient tokens.",
+            marketKey: resolvedMarket.market.key
+          });
+        }
         if (error.status === 400) {
           return sendErrorResponse({
             res,
@@ -871,7 +805,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
             issues: error.issues ?? []
           });
         }
-        console.error("supabase_error", {
+        logError(req, "search_demand_creation_error", {
           code: error.code,
           message: error.message
         });
@@ -884,7 +818,7 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
         });
       }
 
-      console.error("supabase_error", {
+      logError(req, "search_unexpected_error", {
         code: (error as any)?.code,
         message: (error as any)?.message
       });
@@ -898,20 +832,17 @@ router.get("/search/listings", requireAuth, async (req, res, next) => {
     }
   }
 
-  const responsePayload: Record<string, unknown> = {
+  return res.json({
     ok: true,
-    marketKey: resolvedMarket.market.key,
-    results,
-    page,
-    pageSize,
-    total: buySearch.total
-  };
-
-  if (zeroResultsData) {
-    responsePayload.data = zeroResultsData;
-  }
-
-  return res.json(responsePayload);
+    data: {
+      marketKey: resolvedMarket.market.key,
+      results,
+      page,
+      pageSize,
+      total: buySearch.total,
+      ...(zeroResultsData ?? {})
+    }
+  });
 });
 
 export default router;

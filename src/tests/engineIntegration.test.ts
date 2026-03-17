@@ -275,6 +275,51 @@ function createSeedData(): Record<string, SeedRow[]> {
         active: true
       }
     ],
+    market_card_templates: [
+      {
+        id: "tpl-auto-buy",
+        market_id: "mkt-automotive",
+        card_type: "buy_demand",
+        title_template: "Busco {part}",
+        subtitle_template: "{brand} {model} {year}",
+        active: true
+      },
+      {
+        id: "tpl-auto-sell",
+        market_id: "mkt-automotive",
+        card_type: "sell_listing",
+        title_template: "Vendo {part}",
+        subtitle_template: "{brand} {model} {year}",
+        active: true
+      },
+      {
+        id: "tpl-home-buy",
+        market_id: "mkt-home-services",
+        card_type: "buy_demand",
+        title_template: "Busco servicios de {service}",
+        subtitle_template: "{category}",
+        active: true
+      },
+      {
+        id: "tpl-home-sell",
+        market_id: "mkt-home-services",
+        card_type: "sell_listing",
+        title_template: "Ofrezco servicios de {service}",
+        subtitle_template: "{category}",
+        active: true
+      }
+    ],
+    profile_market_certifications: [
+      {
+        id: "cert-inactive-placeholder",
+        profile_id: "nobody",
+        user_id: "nobody",
+        market_id: "mkt-automotive",
+        market_key: "automotive",
+        active: false,
+        status: "inactive"
+      }
+    ],
     catalog_options: [
       { id: "opt-brand-honda", market_key: "automotive", field_key: "brand", option_key: "honda", label: "Honda", sort_order: 1, active: true, parent_option_id: null },
       { id: "opt-brand-toyota", market_key: "automotive", field_key: "brand", option_key: "toyota", label: "Toyota", sort_order: 2, active: true, parent_option_id: null },
