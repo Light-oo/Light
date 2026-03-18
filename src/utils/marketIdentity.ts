@@ -4,6 +4,12 @@ import { loadFieldVocabulary, type VocabularyOption } from "../services/marketVo
 
 type RawRecord = Record<string, unknown>;
 type SupabaseLike = ReturnType<typeof createSupabaseAnon>;
+type VocabularyCacheEntry = Promise<VocabularyOption[]> | VocabularyOption[];
+
+export type DisplayIdentityCache = {
+  dependencyMapByMarketKey: Map<string, Map<string, string[]>>;
+  vocabularyByKey: Map<string, VocabularyCacheEntry>;
+};
 
 function normalizeText(value: unknown) {
   if (typeof value !== "string") {
@@ -98,16 +104,15 @@ export function buildIdentityValuesFromRow(
   return identityValues;
 }
 
-export async function resolveDisplayIdentityValues(params: {
-  supabase: SupabaseLike;
-  resolvedMarket: ResolvedMarket;
-  identityValues: Record<string, string>;
-}) {
-  const { supabase, resolvedMarket, identityValues } = params;
-  const displayIdentityValues: Record<string, string> = {};
-  const dependencyMap = new Map<string, string[]>();
-  const vocabularyCache = new Map<string, VocabularyOption[]>();
+export function createDisplayIdentityCache(): DisplayIdentityCache {
+  return {
+    dependencyMapByMarketKey: new Map<string, Map<string, string[]>>(),
+    vocabularyByKey: new Map<string, VocabularyCacheEntry>()
+  };
+}
 
+function buildDependencyMap(resolvedMarket: ResolvedMarket) {
+  const dependencyMap = new Map<string, string[]>();
   for (const dependency of resolvedMarket.dependencies) {
     const childKey = normalizeText(dependency.fieldKey).toLowerCase();
     const parentKey = normalizeText(dependency.dependsOnFieldKey).toLowerCase();
@@ -119,6 +124,22 @@ export async function resolveDisplayIdentityValues(params: {
       current.push(parentKey);
       dependencyMap.set(childKey, current);
     }
+  }
+  return dependencyMap;
+}
+
+export async function resolveDisplayIdentityValues(params: {
+  supabase: SupabaseLike;
+  resolvedMarket: ResolvedMarket;
+  identityValues: Record<string, string>;
+  cache?: DisplayIdentityCache;
+}) {
+  const { supabase, resolvedMarket, identityValues, cache } = params;
+  const displayIdentityValues: Record<string, string> = {};
+  let dependencyMap = cache?.dependencyMapByMarketKey.get(resolvedMarket.market.key);
+  if (!dependencyMap) {
+    dependencyMap = buildDependencyMap(resolvedMarket);
+    cache?.dependencyMapByMarketKey.set(resolvedMarket.market.key, dependencyMap);
   }
 
   for (const field of resolvedMarket.fields) {
@@ -138,21 +159,31 @@ export async function resolveDisplayIdentityValues(params: {
     }
 
     const cacheKey = `${resolvedMarket.market.key}::${fieldKey}::${dependencySignature(selectedValues)}`;
-    let options = vocabularyCache.get(cacheKey);
-    if (!options) {
-      try {
-        const vocabulary = await loadFieldVocabulary({
-          marketKey: resolvedMarket.market.key,
-          fieldKey,
-          selectedValues,
-          resolvedMarket,
-          supabase: supabase as any
-        });
-        options = vocabulary.options;
-      } catch {
-        options = [];
-      }
-      vocabularyCache.set(cacheKey, options);
+    let optionsEntry = cache?.vocabularyByKey.get(cacheKey);
+    if (!optionsEntry) {
+      optionsEntry = (async () => {
+        try {
+          const vocabulary = await loadFieldVocabulary({
+            marketKey: resolvedMarket.market.key,
+            fieldKey,
+            selectedValues,
+            resolvedMarket,
+            supabase: supabase as any
+          });
+          return vocabulary.options;
+        } catch {
+          return [];
+        }
+      })();
+      cache?.vocabularyByKey.set(cacheKey, optionsEntry);
+    }
+
+    let options: VocabularyOption[];
+    if (optionsEntry) {
+      options = await optionsEntry;
+      cache?.vocabularyByKey.set(cacheKey, options);
+    } else {
+      options = [];
     }
 
     const match = options.find(

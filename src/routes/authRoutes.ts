@@ -15,7 +15,8 @@ const signupRateWindowMs = 60 * 60 * 1000;
 const signupBodySchema = z.object({
   email: z.string().trim().email(),
   password: z.string().min(8),
-  confirm_password: z.string().min(1)
+  confirm_password: z.string().min(1),
+  tos_accepted: z.boolean().optional().default(false)
 }).superRefine((value, ctx) => {
   if (value.password !== value.confirm_password) {
     ctx.addIssue({
@@ -107,6 +108,30 @@ router.post("/auth/signup", async (req, res, next) => {
   if (!userId) {
     logError(req, "signup_missing_user_id", { ip });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  if (parsed.tos_accepted) {
+    const { data: profileUpdate, error: tosUpdateError } = await service
+      .from("profiles")
+      .update({ tos_accepted: true })
+      .eq("id", userId)
+      .select("id")
+      .maybeSingle();
+
+    if (tosUpdateError || !profileUpdate) {
+      const rolledBack = await rollbackSignupUser(userId, req);
+      if (!rolledBack) {
+        return res.status(500).json({ ok: false, error: "unexpected_error" });
+      }
+
+      logError(req, "signup_tos_update_error", {
+        ip,
+        userId,
+        code: tosUpdateError?.code ?? null,
+        message: tosUpdateError?.message ?? "profile_not_found"
+      });
+      return res.status(500).json({ ok: false, error: "unexpected_error" });
+    }
   }
 
   const anon = createSupabaseAnon();

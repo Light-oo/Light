@@ -212,28 +212,38 @@ router.patch("/listings/:listingId/status", requireAuth, async (req, res, next) 
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
-  const { data: updatedListing, error: updateError } = await supabase
+  const { data: existingListing, error: existingListingError } = await supabase
+    .from("listings")
+    .select("id,status")
+    .eq("id", listingId)
+    .eq("seller_profile_id", userId)
+    .maybeSingle();
+
+  if (existingListingError) {
+    logDbError("patch_status_existing_listing_select", existingListingError);
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  if (!existingListing) {
+    return res.status(404).json({ ok: false, error: "not_found" });
+  }
+
+  const { error: updateError } = await supabase
     .from("listings")
     .update({ status })
     .eq("id", listingId)
-    .eq("seller_profile_id", userId)
-    .select("id,status")
-    .maybeSingle();
+    .eq("seller_profile_id", userId);
 
   if (updateError) {
     logDbError("patch_status_update", updateError);
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
-  if (!updatedListing) {
-    return res.status(404).json({ ok: false, error: "not_found" });
-  }
-
   return res.json({
     ok: true,
     data: {
-      listingId: updatedListing.id,
-      status: updatedListing.status
+      listingId: existingListing.id,
+      status
     }
   });
 });

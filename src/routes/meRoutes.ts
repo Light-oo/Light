@@ -4,7 +4,11 @@ import { requireAuth } from "../middleware/requireAuth";
 import { logError } from "../lib/logger";
 import { createSupabaseAnon } from "../lib/supabase";
 import { resolveMarketConfiguration, type ResolvedMarket } from "../services/marketResolution";
-import { parseSignatureValues, resolveDisplayIdentityValues } from "../utils/marketIdentity";
+import {
+  createDisplayIdentityCache,
+  parseSignatureValues,
+  resolveDisplayIdentityValues
+} from "../utils/marketIdentity";
 
 const router = Router();
 
@@ -17,7 +21,7 @@ const patchMeBodySchema = z.object({
 }).strict();
 
 const updateDemandStatusBodySchema = z.object({
-  status: z.literal("inactive")
+  status: z.literal("closed")
 }).strict();
 
 type ListingSummaryRow = {
@@ -144,6 +148,7 @@ async function buildListingSummaries(
   supabase: ReturnType<typeof createSupabaseAnon>,
   rows: Array<Record<string, unknown>>
 ) {
+  const displayIdentityCache = createDisplayIdentityCache();
   const marketKeyById = await buildMarketKeyByIdMap(
     supabase,
     rows.map((row) => normalizeText((row as any).market_id))
@@ -161,7 +166,12 @@ async function buildListingSummaries(
       const identityValues = parseSignatureValues(signature);
       const resolvedMarket = resolvedMarketByKey.get(marketKey);
       const displayIdentityValues = resolvedMarket
-        ? await resolveDisplayIdentityValues({ supabase: supabase as any, resolvedMarket, identityValues })
+        ? await resolveDisplayIdentityValues({
+            supabase: supabase as any,
+            resolvedMarket,
+            identityValues,
+            cache: displayIdentityCache
+          })
         : identityValues;
       const pricing = extractRecord((row as any).pricing);
       const location = extractRecord((row as any).listing_locations);
@@ -192,6 +202,7 @@ async function buildDemandSummaries(
   supabase: ReturnType<typeof createSupabaseAnon>,
   rows: Array<Record<string, unknown>>
 ) {
+  const displayIdentityCache = createDisplayIdentityCache();
   const marketKeyById = await buildMarketKeyByIdMap(
     supabase,
     rows.map((row) => normalizeText((row as any).market_id))
@@ -209,7 +220,12 @@ async function buildDemandSummaries(
       const identityValues = parseSignatureValues(signature);
       const resolvedMarket = resolvedMarketByKey.get(marketKey);
       const displayIdentityValues = resolvedMarket
-        ? await resolveDisplayIdentityValues({ supabase: supabase as any, resolvedMarket, identityValues })
+        ? await resolveDisplayIdentityValues({
+            supabase: supabase as any,
+            resolvedMarket,
+            identityValues,
+            cache: displayIdentityCache
+          })
         : identityValues;
 
       return {
@@ -307,7 +323,7 @@ router.get("/api/me/buy-demands", requireAuth, async (req, res) => {
 
   const { data, error } = await supabase
     .from("demands")
-    .select("*")
+    .select("id,market_id,is_certified,status,created_at,intention_signature,details_text")
     .eq("requester_user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -330,7 +346,7 @@ router.get("/api/me/buy-demands", requireAuth, async (req, res) => {
 
 router.patch("/api/me/buy-demands/:id/status", requireAuth, async (req, res, next) => {
   let id: string;
-  let status: "inactive";
+  let status: "closed";
   try {
     ({ id } = idParamSchema.parse(req.params));
     ({ status } = updateDemandStatusBodySchema.parse(req.body));
@@ -342,29 +358,60 @@ router.patch("/api/me/buy-demands/:id/status", requireAuth, async (req, res, nex
   const supabase = createSupabaseAnon({ accessToken: authToken });
   const userId = (req as unknown as { user: { id: string } }).user.id;
 
-  const { data, error } = await supabase
+  const { data: existingDemand, error: existingDemandError } = await supabase
+    .from("demands")
+    .select("id,status")
+    .eq("id", id)
+    .eq("requester_user_id", userId)
+    .maybeSingle();
+
+  if (existingDemandError) {
+    logError(req, "me_demand_status_select_error", {
+      code: existingDemandError.code,
+      message: existingDemandError.message
+    });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  if (!existingDemand) {
+    return res.status(404).json({ ok: false, error: "not_found" });
+  }
+
+  const { error } = await supabase
     .from("demands")
     .update({ status })
     .eq("id", id)
-    .eq("requester_user_id", userId)
-    .eq("status", "open")
-    .select("id,status")
-    .maybeSingle();
+    .eq("requester_user_id", userId);
 
   if (error) {
     logError(req, "me_demand_status_update_error", { code: error.code, message: error.message });
     return res.status(500).json({ ok: false, error: "unexpected_error" });
   }
 
-  if (!data) {
-    return res.status(404).json({ ok: false, error: "not_found" });
+  const { data: updatedDemand, error: updatedDemandError } = await supabase
+    .from("demands")
+    .select("id,status")
+    .eq("id", id)
+    .eq("requester_user_id", userId)
+    .maybeSingle();
+
+  if (updatedDemandError) {
+    logError(req, "me_demand_status_verify_error", {
+      code: updatedDemandError.code,
+      message: updatedDemandError.message
+    });
+    return res.status(500).json({ ok: false, error: "unexpected_error" });
+  }
+
+  if (!updatedDemand || normalizeText((updatedDemand as any).status) !== status) {
+    return res.status(403).json({ ok: false, error: "forbidden" });
   }
 
   return res.json({
     ok: true,
     data: {
-      id: (data as any).id,
-      status: (data as any).status
+      id: updatedDemand.id,
+      status: normalizeText((updatedDemand as any).status)
     }
   });
 });

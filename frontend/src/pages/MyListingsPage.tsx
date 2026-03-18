@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { CertificationBadge } from "../components/CertificationBadge";
 import { ApiError } from "../lib/apiClient";
+import type { createApiClient } from "../lib/apiClient";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import type { MarketDefinitionResponse } from "../lib/marketDefinition";
 import {
@@ -42,7 +43,7 @@ type MyDemandRow = {
   identityValues: IdentityValueMap;
   signature: string;
   isCertified?: boolean;
-  status: "open" | "inactive" | "closed" | "cancelled" | string;
+  status: "open" | "closed" | "inactive" | "cancelled" | string;
   created_at: string | null;
   request?: {
     detailsText: string | null;
@@ -67,6 +68,83 @@ type MarketFieldsByKey = Record<
     sell: MarketFieldDefinition[];
   }
 >;
+
+type MyListingsPageData = {
+  listings: MyListingRow[];
+  demands: MyDemandRow[];
+};
+
+const pageDataCache = new Map<string, Promise<MyListingsPageData>>();
+const marketDefinitionCache = new Map<string, MarketFieldsByKey[string]>();
+const marketDefinitionInFlight = new Map<string, Promise<readonly [string, MarketFieldsByKey[string]]>>();
+
+function getPageDataCacheKey(token: string) {
+  return token.trim();
+}
+
+function loadMyListingsPageData(
+  api: ReturnType<typeof createApiClient>,
+  token: string
+): Promise<MyListingsPageData> {
+  const cacheKey = getPageDataCacheKey(token);
+  const cached = pageDataCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const request = Promise.all([
+    api.get<MyListingsResponse>("/api/me/listings"),
+    api.get<MyDemandsResponse>("/api/me/buy-demands")
+  ])
+    .then(([listings, demandRows]) => ({
+      listings: Array.isArray(listings.data) ? listings.data : [],
+      demands: Array.isArray(demandRows.data) ? demandRows.data : []
+    }))
+    .catch((error) => {
+      pageDataCache.delete(cacheKey);
+      throw error;
+    });
+
+  pageDataCache.set(cacheKey, request);
+  return request;
+}
+
+async function loadMarketDefinitionOnce(
+  api: ReturnType<typeof createApiClient>,
+  marketKey: string
+): Promise<readonly [string, MarketFieldsByKey[string]]> {
+  const normalizedMarketKey = marketKey.trim().toLowerCase();
+  const cached = marketDefinitionCache.get(normalizedMarketKey);
+  if (cached) {
+    return [normalizedMarketKey, cached] as const;
+  }
+
+  const inFlight = marketDefinitionInFlight.get(normalizedMarketKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = api
+    .get<MarketDefinitionResponse>(`/catalog/markets/${encodeURIComponent(normalizedMarketKey)}`)
+    .then((response) => {
+      const normalizedFields = normalizeMarketFields(response.data.fields);
+      const definitions = {
+        cardTemplates: response.data.cardTemplates,
+        buy: resolveOrderedFlowFields(normalizedFields, "BUY"),
+        sell: resolveOrderedFlowFields(normalizedFields, "SELL")
+      } satisfies MarketFieldsByKey[string];
+      marketDefinitionCache.set(normalizedMarketKey, definitions);
+      marketDefinitionInFlight.delete(normalizedMarketKey);
+      return [normalizedMarketKey, definitions] as const;
+    })
+    .catch((error) => {
+      marketDefinitionInFlight.delete(normalizedMarketKey);
+      throw error;
+    });
+
+  marketDefinitionInFlight.set(normalizedMarketKey, request);
+  return request;
+}
 
 function inferDisplayFieldsFromIdentity(identityValues: IdentityValueMap): MarketFieldDefinition[] {
   return Object.keys(identityValues).map((key, index) => ({
@@ -328,18 +406,26 @@ export function MyListingsPage() {
       return;
     }
 
+    let cancelled = false;
     setError(null);
-    Promise.all([
-      api.get<MyListingsResponse>("/api/me/listings"),
-      api.get<MyDemandsResponse>("/api/me/buy-demands")
-    ])
-      .then(([listings, demandRows]) => {
-        setRows(Array.isArray(listings.data) ? listings.data : []);
-        setDemands(Array.isArray(demandRows.data) ? demandRows.data : []);
+    loadMyListingsPageData(api, token)
+      .then(({ listings, demands }) => {
+        if (cancelled) {
+          return;
+        }
+        setRows(listings);
+        setDemands(demands);
       })
       .catch((err) => {
+        if (cancelled) {
+          return;
+        }
         setError(toUiErrorMessage(err));
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [api, token]);
 
   const loadedMarketKeys = useMemo(
@@ -356,20 +442,7 @@ export function MyListingsPage() {
     let cancelled = false;
 
     Promise.allSettled(
-      loadedMarketKeys.map(async (marketKey) => {
-        const response = await api.get<MarketDefinitionResponse>(
-          `/catalog/markets/${encodeURIComponent(marketKey)}`
-        );
-        const normalizedFields = normalizeMarketFields(response.data.fields);
-        return [
-          marketKey,
-          {
-            cardTemplates: response.data.cardTemplates,
-            buy: resolveOrderedFlowFields(normalizedFields, "BUY"),
-            sell: resolveOrderedFlowFields(normalizedFields, "SELL")
-          }
-        ] as const;
-      })
+      loadedMarketKeys.map((marketKey) => loadMarketDefinitionOnce(api, marketKey))
     ).then((results) => {
       if (cancelled) {
         return;
@@ -456,10 +529,10 @@ export function MyListingsPage() {
       await api.patch<{ ok: true; data: { id: string; status: string } }>(
         `/api/me/buy-demands/${row.id}/status`,
         {
-          status: "inactive"
+          status: "closed"
         }
       );
-      setDemands((current) => current.map((item) => (item.id === row.id ? { ...item, status: "inactive" } : item)));
+      setDemands((current) => current.map((item) => (item.id === row.id ? { ...item, status: "closed" } : item)));
     } catch (err) {
       setError(toUiErrorMessage(err));
     } finally {
