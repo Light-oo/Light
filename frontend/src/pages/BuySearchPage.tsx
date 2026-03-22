@@ -1,7 +1,7 @@
-﻿import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+﻿import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { Card } from "../components/Card";
+import { Card, isInteractiveCardTarget } from "../components/Card";
 import { CertificationBadge } from "../components/CertificationBadge";
 import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
@@ -13,6 +13,7 @@ import { toUiErrorMessage } from "../lib/errorMessages";
 import type { MarketDefinitionResponse } from "../lib/marketDefinition";
 import {
   buildCardContent,
+  buildCardFieldRows,
   extractIdentityValuesForFields,
 } from "../lib/listingDisplay";
 import {
@@ -55,6 +56,7 @@ type RevealResponse = {
 };
 
 type DemandPreviewCard = {
+  id: string;
   identityValues: Record<string, string>;
   detailsText: string;
   isCertified: boolean;
@@ -95,6 +97,16 @@ export function BuySearchPage() {
   >({});
   const searchDebounceRef = useRef<number | null>(null);
   const optionIdToKeyRef = useRef<Record<string, Record<string, string>>>({});
+
+  function activateCardNavigation(
+    event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
+    path: string
+  ) {
+    if (isInteractiveCardTarget(event.target)) {
+      return;
+    }
+    navigate(path);
+  }
 
   useEffect(() => {
     return () => {
@@ -583,6 +595,7 @@ export function BuySearchPage() {
             );
 
             setDemandPreview({
+              id: normalized.demandId ?? "",
               identityValues: previewIdentityValues,
               detailsText: hasDetailField
                 ? searchRequest.structuredValues.detail ?? ""
@@ -860,22 +873,47 @@ export function BuySearchPage() {
                 template: marketCardTemplates?.buyDemand,
                 detailsText: demandPreview.detailsText || null
               });
+              const fieldRows = buildCardFieldRows({
+                subtitleTemplate: marketCardTemplates?.buyDemand?.subtitleTemplate,
+                orderedFields: searchFormFields,
+                values: demandPreview.identityValues,
+                maxRows: 4
+              });
 
               return (
                 <article
                   className={
                     demandPreview.isCertified
-                      ? "card stack card-elevated demand-card-compact card-with-certification"
-                      : "card stack card-elevated demand-card-compact"
+                      ? "card stack card-elevated demand-card-compact card-with-certification is-clickable"
+                      : "card stack card-elevated demand-card-compact is-clickable"
                   }
+                  role="link"
+                  tabIndex={0}
+                  onClick={(event) => activateCardNavigation(event, `/d/${demandPreview.id}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      activateCardNavigation(event, `/d/${demandPreview.id}`);
+                    }
+                  }}
                 >
-                  {demandPreview.isCertified ? <CertificationBadge /> : null}
-                  <p>
-                    <strong>{cardContent.title}</strong>
-                  </p>
-                  {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+                  <div className="card-header-row">
+                    <p className="card-title-text">
+                      <strong>{cardContent.title}</strong>
+                    </p>
+                    {demandPreview.isCertified ? <CertificationBadge inline /> : null}
+                  </div>
+                  {fieldRows.length > 0 ? (
+                    <div className="card-field-rows">
+                      {fieldRows.map((fieldRow) => (
+                        <div key={fieldRow.key} className="card-field-row">
+                          <span className="card-field-label">{fieldRow.label}</span>
+                          <span className="card-field-value">{fieldRow.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
                   {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
-                  <p>Creado: {formatWhen(demandPreview.createdAtIso)}</p>
                 </article>
               );
             })()}
@@ -909,21 +947,47 @@ export function BuySearchPage() {
             municipality: card.location.municipality ?? null
           }
         });
+        const fieldRows = buildCardFieldRows({
+          subtitleTemplate: marketCardTemplates?.sellListing?.subtitleTemplate,
+          orderedFields: searchFormFields,
+          values: identityValues,
+          locationDepartment: card.location.department ?? null,
+          maxRows: 4
+        });
 
         const reveal = revealState[card.id];
         return (
           <article
             key={card.id}
-            className={card.isCertified ? "card stack card-elevated card-with-certification" : "card stack card-elevated"}
+            className={card.isCertified ? "card stack card-elevated card-with-certification is-clickable" : "card stack card-elevated is-clickable"}
+            role="link"
+            tabIndex={0}
+            onClick={(event) => activateCardNavigation(event, `/l/${card.id}`)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                activateCardNavigation(event, `/l/${card.id}`);
+              }
+            }}
           >
-            {card.isCertified ? <CertificationBadge /> : null}
-            <p>
-              <strong>{cardContent.title}</strong>
-            </p>
-            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+            <div className="card-header-row">
+              <p className="card-title-text">
+                <strong>{cardContent.title}</strong>
+              </p>
+              {card.isCertified ? <CertificationBadge inline /> : null}
+            </div>
+            {fieldRows.length > 0 ? (
+              <div className="card-field-rows">
+                {fieldRows.map((fieldRow) => (
+                  <div key={fieldRow.key} className="card-field-row">
+                    <span className="card-field-label">{fieldRow.label}</span>
+                    <span className="card-field-value">{fieldRow.value}</span>
+                  </div>
+                ))}
+              </div>
+            ) : cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
             {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
             {!marketCardTemplates?.sellListing && formattedPrice ? <p>{`Precio: ${formattedPrice}`}</p> : null}
-            <p>Creado: {formatWhen(card.created_at || card.audit?.createdAt || "")}</p>
 
             <RevealButton
               loading={reveal?.loading}

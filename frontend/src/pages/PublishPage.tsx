@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+﻿import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { Card } from "../components/Card";
+import { Card, isInteractiveCardTarget } from "../components/Card";
 import { CertificationBadge } from "../components/CertificationBadge";
 import { FilterSelect } from "../components/FilterSelect";
 import { PriceInput } from "../components/PriceInput";
@@ -38,6 +38,7 @@ import { type Option } from "../lib/marketOptions";
 import { mapFieldOptionsForUi } from "../lib/travelRangeOptions";
 
 type PublishSuccessCard = {
+  listingId: string;
   title: string;
   secondaryLine?: string | null;
   metaLine?: string | null;
@@ -83,6 +84,16 @@ export function PublishPage() {
   const [error, setError] = useState<string | null>(null);
   const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
   const optionIdToKeyRef = useRef<Record<string, Record<string, string>>>({});
+
+  function activateCardNavigation(
+    event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
+    path: string
+  ) {
+    if (isInteractiveCardTarget(event.target)) {
+      return;
+    }
+    navigate(path);
+  }
 
   const prefillAppliedRef = useRef(false);
   const isDirty = useMemo(
@@ -795,6 +806,7 @@ export function PublishPage() {
       const successContent = buildSuccessCardContent();
 
       const nextSuccessCard = {
+        listingId: normalized.listingId,
         title: successContent.title,
         secondaryLine: successContent.secondaryLine,
         metaLine:
@@ -942,7 +954,18 @@ export function PublishPage() {
 
       {successCard ? (
         <div className="stack gap-sm">
-            <article className={successCard.isCertified ? "card stack card-elevated demand-card-compact card-with-certification" : "card stack card-elevated demand-card-compact"}>
+            <article
+              className={successCard.isCertified ? "card stack card-elevated demand-card-compact card-with-certification is-clickable" : "card stack card-elevated demand-card-compact is-clickable"}
+              role="link"
+              tabIndex={0}
+              onClick={(event) => activateCardNavigation(event, `/l/${successCard.listingId}`)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  activateCardNavigation(event, `/l/${successCard.listingId}`);
+                }
+              }}
+            >
               {successCard.isCertified ? <CertificationBadge /> : null}
               <p><strong>{successCard.title}</strong></p>
             {successCard.secondaryLine ? <p>{successCard.secondaryLine}</p> : null}

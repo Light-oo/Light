@@ -130,6 +130,27 @@ export function buildGenericCardContent(params: {
   };
 }
 
+export function extractTemplateKeys(template: string | null | undefined) {
+  if (!template) {
+    return [];
+  }
+
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  const matches = template.matchAll(/\{([a-zA-Z0-9_]+)\}/g);
+
+  for (const match of matches) {
+    const key = match[1]?.trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    keys.push(key);
+  }
+
+  return keys;
+}
+
 function normalizeRenderedTemplate(value: string | null | undefined) {
   if (!value) {
     return null;
@@ -203,6 +224,51 @@ export function buildCardRenderValues(params: {
   }
 
   return values;
+}
+
+export function buildCardFieldRows(params: {
+  subtitleTemplate: string | null | undefined;
+  orderedFields: MarketFieldDefinition[];
+  values: ListingIdentityValues;
+  locationDepartment?: string | null;
+  maxRows?: number;
+}) {
+  const templateKeys = extractTemplateKeys(params.subtitleTemplate);
+  if (templateKeys.length === 0) {
+    return [];
+  }
+
+  const maxRows = params.maxRows ?? 4;
+  const fieldMap = new Map(
+    params.orderedFields.map((field) => [field.key.trim().toLowerCase(), field])
+  );
+  const rows: Array<{ key: string; label: string; value: string }> = [];
+
+  for (const key of templateKeys) {
+    if (rows.length >= maxRows) {
+      break;
+    }
+    const value = normalizeDisplayValue(params.values[key]);
+    if (!value) {
+      continue;
+    }
+    rows.push({
+      key,
+      label: fieldMap.get(key)?.label ?? key,
+      value
+    });
+  }
+
+  const locationDepartment = normalizeDisplayValue(params.locationDepartment);
+  if (locationDepartment && rows.length < maxRows) {
+    rows.push({
+      key: "location",
+      label: "Ubicación",
+      value: locationDepartment
+    });
+  }
+
+  return rows;
 }
 
 export function buildCardContent(params: {

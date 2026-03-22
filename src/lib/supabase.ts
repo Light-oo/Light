@@ -8,7 +8,14 @@ export function createSupabaseAnon(options?: { accessToken?: string }) {
   return createClient(
     env.SUPABASE_URL,
     env.SUPABASE_ANON_KEY,
-    headers ? { global: { headers } } : undefined
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
+      },
+      ...(headers ? { global: { headers } } : {})
+    }
   );
 }
 

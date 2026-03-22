@@ -12,6 +12,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { MarketSelectPage } from "./pages/MarketSelectPage";
 import { MyListingsPage } from "./pages/MyListingsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { PublicDetailPage } from "./pages/PublicDetailPage";
 import { PublishPage } from "./pages/PublishPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { SellDemandsPage } from "./pages/SellDemandsPage";
@@ -37,6 +38,8 @@ export function App() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/signup" element={<SignupPage />} />
+        <Route path="/l/:listingId" element={<PublicDetailPage kind="listing" />} />
+        <Route path="/d/:demandId" element={<PublicDetailPage kind="demand" />} />
 
         <Route element={<RequireAuth />}>
           <Route path="/verify-whatsapp" element={<WhatsappVerificationPage />} />

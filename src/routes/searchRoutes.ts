@@ -14,8 +14,10 @@ import {
   MarketDemandCreationError
 } from "../services/marketDemandCreation";
 import {
+  createDisplayIdentityCache,
   buildIdentityValuesFromRow,
-  parseSignatureValues
+  parseSignatureValues,
+  resolveDisplayIdentityValues
 } from "../utils/marketIdentity";
 
 const router = Router();
@@ -345,16 +347,38 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
     });
   }
 
-  const results = sellSearch.results.map((resultRow) => {
+  const displayIdentityCache = createDisplayIdentityCache();
+  const results = await Promise.all(sellSearch.results.map(async (resultRow) => {
     const demandId = normalizeText((resultRow as any)?.id);
-    const fullRow = demandId ? demandRowById.get(demandId) ?? (resultRow as any) : (resultRow as any);
+    const mappedRow = demandId ? demandRowById.get(demandId) : undefined;
+    const fullRow = mappedRow ?? (resultRow as any);
     const signatureValues = parseSignatureValues((fullRow as any)?.intention_signature);
     const requesterUserIdRaw = normalizeText((fullRow as any)?.requester_user_id);
-    const identityValues = buildIdentityValuesFromRow(
+    const sourceLabel = mappedRow ? "demand_row" : "search_result_row";
+    const sourcePart = normalizeText((fullRow as any)?.part);
+    const sourceSystem = normalizeText((fullRow as any)?.system);
+    const sourceItemType = normalizeText((fullRow as any)?.item_type);
+    logWarn(req, "search_sell_mode_enrichment_source_debug", {
+      demandId,
+      source: sourceLabel,
+      demandRowHit: Boolean(mappedRow),
+      isOwnDemand: requesterUserIdRaw === requesterUserId,
+      requesterUserId: requesterUserIdRaw || null,
+      rawPart: sourcePart || null,
+      rawSystem: sourceSystem || null,
+      rawItemType: sourceItemType || null
+    });
+    const rawIdentityValues = buildIdentityValuesFromRow(
       fullRow as Record<string, unknown>,
       resolvedMarket,
       signatureValues
     );
+    const identityValues = await resolveDisplayIdentityValues({
+      supabase: supabase as any,
+      resolvedMarket,
+      identityValues: rawIdentityValues,
+      cache: displayIdentityCache
+    });
 
     return {
       id: demandId,
@@ -376,7 +400,7 @@ router.get("/search/demands", requireAuth, async (req, res, next) => {
         createdAt: (fullRow as any)?.created_at
       }
     };
-  });
+  }));
 
   return res.json({
     ok: true,

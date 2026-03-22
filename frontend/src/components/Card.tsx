@@ -15,3 +15,15 @@ export function Card({ title, className, children }: CardProps) {
   );
 }
 
+export function isInteractiveCardTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      'button, a, input, select, textarea, summary, [role="button"], [data-card-interactive="true"]'
+    )
+  );
+}
+

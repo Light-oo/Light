@@ -3,15 +3,16 @@ import logoLoader from "../assets/logo-loader.svg";
 
 type CertificationBadgeProps = {
   label?: string;
+  inline?: boolean;
 };
 
-export function CertificationBadge({ label = "Certified" }: CertificationBadgeProps) {
+export function CertificationBadge({ label = "Certified", inline = false }: CertificationBadgeProps) {
   const [visible, setVisible] = useState(false);
 
   return (
     <button
       type="button"
-      className="certification-badge"
+      className={inline ? "certification-badge certification-badge-inline" : "certification-badge"}
       aria-label={label}
       onMouseEnter={() => setVisible(true)}
       onMouseLeave={() => setVisible(false)}

@@ -9,6 +9,7 @@ import meRoutes from "./routes/meRoutes";
 import profileRoutes from "./routes/profileRoutes";
 import contactAccessRoutes from "./routes/contactAccessRoutes";
 import listingsRoutes from "./routes/listingsRoutes";
+import publicDetailRoutes from "./routes/publicDetailRoutes";
 import { requestId } from "./middleware/requestId";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -27,6 +28,7 @@ app.use(meRoutes);
 app.use(profileRoutes);
 app.use(contactAccessRoutes);
 app.use(listingsRoutes);
+app.use(publicDetailRoutes);
 
 app.use(errorHandler);
 

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { KeyboardEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { isInteractiveCardTarget } from "../components/Card";
 import { CertificationBadge } from "../components/CertificationBadge";
 import { ApiError } from "../lib/apiClient";
 import type { createApiClient } from "../lib/apiClient";
@@ -7,6 +9,7 @@ import { toUiErrorMessage } from "../lib/errorMessages";
 import type { MarketDefinitionResponse } from "../lib/marketDefinition";
 import {
   buildCardContent,
+  buildCardFieldRows,
   parseSignatureIdentityValues
 } from "../lib/listingDisplay";
 import {
@@ -244,6 +247,7 @@ function ListingGroup({
   mode,
   expanded,
   onToggle,
+  onNavigate,
   onSetInactive,
   onSetActive,
   togglingById
@@ -254,6 +258,7 @@ function ListingGroup({
   mode: "active" | "inactive";
   expanded: boolean;
   onToggle: () => void;
+  onNavigate: (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>, path: string) => void;
   onSetInactive: (row: MyListingRow) => void;
   onSetActive: (row: MyListingRow) => void;
   togglingById: Record<string, boolean>;
@@ -286,20 +291,46 @@ function ListingGroup({
               price,
               location: row.location
             });
+            const fieldRows = buildCardFieldRows({
+              subtitleTemplate: template?.subtitleTemplate,
+              orderedFields: displayFields,
+              values: identityValues,
+              locationDepartment: row.location?.department ?? null,
+              maxRows: 4
+            });
 
             return (
               <article
                 key={row.id}
-                className={row.isCertified ? "card stack listing-row card-with-certification" : "card stack listing-row"}
+                className={row.isCertified ? "card stack listing-row card-with-certification is-clickable" : "card stack listing-row is-clickable"}
+                role="link"
+                tabIndex={0}
+                onClick={(event) => onNavigate(event, `/l/${row.id}`)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onNavigate(event, `/l/${row.id}`);
+                  }
+                }}
               >
-                {row.isCertified ? <CertificationBadge /> : null}
-                <p>
-                  <strong>{cardContent.title}</strong>
-                </p>
-                {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+                <div className="card-header-row">
+                  <p className="card-title-text">
+                    <strong>{cardContent.title}</strong>
+                  </p>
+                  {row.isCertified ? <CertificationBadge inline /> : null}
+                </div>
+                {fieldRows.length > 0 ? (
+                  <div className="card-field-rows">
+                    {fieldRows.map((fieldRow) => (
+                      <div key={fieldRow.key} className="card-field-row">
+                        <span className="card-field-label">{fieldRow.label}</span>
+                        <span className="card-field-value">{fieldRow.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
                 {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
                 {!template && price ? <p>{`Precio: ${price}`}</p> : null}
-                <p>Creado: {formatWhen(row.created_at)}</p>
                 {mode === "active" ? (
                   <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
                     {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
@@ -323,6 +354,7 @@ function DemandGroup({
   marketFieldsByKey,
   expanded,
   onToggle,
+  onNavigate,
   onSetInactive,
   togglingById
 }: {
@@ -331,6 +363,7 @@ function DemandGroup({
   marketFieldsByKey: MarketFieldsByKey;
   expanded: boolean;
   onToggle: () => void;
+  onNavigate: (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>, path: string) => void;
   onSetInactive: (row: MyDemandRow) => void;
   togglingById: Record<string, boolean>;
 }) {
@@ -360,20 +393,45 @@ function DemandGroup({
               template,
               detailsText: row.request?.detailsText ?? null
             });
+            const fieldRows = buildCardFieldRows({
+              subtitleTemplate: template?.subtitleTemplate,
+              orderedFields: displayFields,
+              values: identityValues,
+              maxRows: 4
+            });
             const isActive = row.status === "open";
 
             return (
               <article
                 key={row.id}
-                className={row.isCertified ? "card stack listing-row card-with-certification" : "card stack listing-row"}
+                className={row.isCertified ? "card stack listing-row card-with-certification is-clickable" : "card stack listing-row is-clickable"}
+                role="link"
+                tabIndex={0}
+                onClick={(event) => onNavigate(event, `/d/${row.id}`)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onNavigate(event, `/d/${row.id}`);
+                  }
+                }}
               >
-                {row.isCertified ? <CertificationBadge /> : null}
-                <p>
-                  <strong>{cardContent.title}</strong>
-                </p>
-                {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
+                <div className="card-header-row">
+                  <p className="card-title-text">
+                    <strong>{cardContent.title}</strong>
+                  </p>
+                  {row.isCertified ? <CertificationBadge inline /> : null}
+                </div>
+                {fieldRows.length > 0 ? (
+                  <div className="card-field-rows">
+                    {fieldRows.map((fieldRow) => (
+                      <div key={fieldRow.key} className="card-field-row">
+                        <span className="card-field-label">{fieldRow.label}</span>
+                        <span className="card-field-value">{fieldRow.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
                 {cardContent.metaLine ? <p>{cardContent.metaLine}</p> : null}
-                <p>Creado: {formatWhen(row.created_at)}</p>
                 {isActive ? (
                   <button type="button" onClick={() => onSetInactive(row)} disabled={Boolean(togglingById[row.id])}>
                     {togglingById[row.id] ? "Actualizando..." : "Desactivar"}
@@ -389,6 +447,7 @@ function DemandGroup({
 
 export function MyListingsPage() {
   const { api, token } = useAuth();
+  const navigate = useNavigate();
   const [rows, setRows] = useState<MyListingRow[]>([]);
   const [demands, setDemands] = useState<MyDemandRow[]>([]);
   const [marketFieldsByKey, setMarketFieldsByKey] = useState<MarketFieldsByKey>({});
@@ -400,6 +459,16 @@ export function MyListingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [togglingById, setTogglingById] = useState<Record<string, boolean>>({});
   const [togglingDemandById, setTogglingDemandById] = useState<Record<string, boolean>>({});
+
+  function activateCardNavigation(
+    event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
+    path: string
+  ) {
+    if (isInteractiveCardTarget(event.target)) {
+      return;
+    }
+    navigate(path);
+  }
 
   useEffect(() => {
     if (!token) {
@@ -561,6 +630,7 @@ export function MyListingsPage() {
         marketFieldsByKey={marketFieldsByKey}
         expanded={expandedSections.activeDemands}
         onToggle={() => toggleSection("activeDemands")}
+        onNavigate={activateCardNavigation}
         onSetInactive={setDemandInactive}
         togglingById={togglingDemandById}
       />
@@ -572,6 +642,7 @@ export function MyListingsPage() {
         mode="active"
         expanded={expandedSections.activeListings}
         onToggle={() => toggleSection("activeListings")}
+        onNavigate={activateCardNavigation}
         onSetInactive={setInactive}
         onSetActive={setActive}
         togglingById={togglingById}
@@ -584,6 +655,7 @@ export function MyListingsPage() {
         mode="inactive"
         expanded={expandedSections.inactiveListings}
         onToggle={() => toggleSection("inactiveListings")}
+        onNavigate={activateCardNavigation}
         onSetInactive={setInactive}
         onSetActive={setActive}
         togglingById={togglingById}

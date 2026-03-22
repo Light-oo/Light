@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+﻿import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { Card } from "../components/Card";
+import { Card, isInteractiveCardTarget } from "../components/Card";
 import { CertificationBadge } from "../components/CertificationBadge";
 import { FilterSelect } from "../components/FilterSelect";
 import { RevealButton } from "../components/RevealButton";
@@ -8,7 +9,8 @@ import { useMarket } from "../context/MarketContext";
 import { useOptions } from "../context/OptionsContext";
 import { toUiErrorMessage } from "../lib/errorMessages";
 import {
-  buildCardContent
+  buildCardContent,
+  buildCardFieldRows
 } from "../lib/listingDisplay";
 import {
   buildDependencyMaps,
@@ -148,6 +150,7 @@ function formatWhen(value: string) {
 
 export function SellDemandsPage() {
   const { api, token, userId } = useAuth();
+  const navigate = useNavigate();
   const { getOptions } = useOptions();
   const { marketKey, availableMarkets, setMarket } = useMarket();
 
@@ -464,6 +467,32 @@ export function SellDemandsPage() {
     return normalizeDisplayToken(value);
   }
 
+  function resolveDemandCardTitle(
+    rawIdentityValues: Record<string, string>,
+    fallbackTitle: string
+  ) {
+    const rawPart = (rawIdentityValues.part ?? "").trim();
+    if (!rawPart) {
+      return fallbackTitle;
+    }
+
+    const normalizedPart = rawPart.toLowerCase();
+    const partTokens = normalizedPart.split("_").filter((token) => token.length > 0);
+    const firstToken = partTokens[0] ?? "";
+    const prefixTokens = [rawIdentityValues.system, rawIdentityValues.item_type]
+      .map((value) => (value ?? "").trim().toLowerCase())
+      .filter((value) => value.length > 0)
+      .map((value) => value.split("_").filter((token) => token.length > 0)[0] ?? "");
+
+    let cleanedRawPart = rawPart;
+    if (partTokens.length > 1 && prefixTokens.some((prefixToken) => firstToken === prefixToken)) {
+      cleanedRawPart = rawPart.split("_").slice(1).join("_").trim();
+    }
+
+    const displayPart = resolveFieldDisplayValue("part", cleanedRawPart || rawPart);
+    return `Busco ${displayPart}`;
+  }
+
   function updateField(fieldKey: string, value: string) {
     setMessage(null);
     setError(null);
@@ -568,6 +597,16 @@ export function SellDemandsPage() {
 
   const canGoNext = page * pageSize < total;
 
+  function activateCardNavigation(
+    event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
+    path: string
+  ) {
+    if (isInteractiveCardTarget(event.target)) {
+      return;
+    }
+    navigate(path);
+  }
+
   return (
     <div className="screen stack gap-lg">
       <Card className="stack">
@@ -647,6 +686,14 @@ export function SellDemandsPage() {
             municipality: null
           }
         });
+        const titleText = resolveDemandCardTitle(card.identityValues, cardContent.title);
+        const fieldRows = buildCardFieldRows({
+          subtitleTemplate: marketCardTemplates?.buyDemand?.subtitleTemplate,
+          orderedFields: sellFormFields,
+          values: displayIdentityValues,
+          locationDepartment: card.location?.department ?? null,
+          maxRows: 4
+        });
         const createdAt = card.created_at || card.audit?.createdAt || "";
         const requesterUserId = String(card.audit?.requesterUserId ?? "").trim();
         const reveal = revealState[card.id];
@@ -654,12 +701,31 @@ export function SellDemandsPage() {
         return (
           <article
             key={card.id}
-            className={card.isCertified ? "card stack card-elevated demand-card-compact card-with-certification" : "card stack card-elevated demand-card-compact"}
+            className={card.isCertified ? "card stack card-elevated demand-card-compact card-with-certification is-clickable" : "card stack card-elevated demand-card-compact is-clickable"}
+            role="link"
+            tabIndex={0}
+            onClick={(event) => activateCardNavigation(event, `/d/${card.id}`)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                activateCardNavigation(event, `/d/${card.id}`);
+              }
+            }}
           >
-            {card.isCertified ? <CertificationBadge /> : null}
-            <p><strong>{cardContent.title}</strong></p>
-            {cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
-            <p>Creado: {formatWhen(createdAt)}</p>
+            <div className="card-header-row">
+              <p className="card-title-text"><strong>{titleText}</strong></p>
+              {card.isCertified ? <CertificationBadge inline /> : null}
+            </div>
+            {fieldRows.length > 0 ? (
+              <div className="card-field-rows">
+                {fieldRows.map((fieldRow) => (
+                  <div key={fieldRow.key} className="card-field-row">
+                    <span className="card-field-label">{fieldRow.label}</span>
+                    <span className="card-field-value">{fieldRow.value}</span>
+                  </div>
+                ))}
+              </div>
+            ) : cardContent.secondaryLine ? <p>{cardContent.secondaryLine}</p> : null}
             {requesterUserId && requesterUserId === userId ? (
               <p className="info">Esta es su búsqueda.</p>
             ) : (
